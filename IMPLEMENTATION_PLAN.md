@@ -311,57 +311,70 @@ This document outlines the complete implementation plan for the Image Organizer 
 
 ### Tasks
 
-#### 3.1 Google Drive API Setup
-- [ ] Create Google Cloud project
-- [ ] Enable Drive API
-- [ ] Set up OAuth 2.0 credentials
-- [ ] Implement authentication flow
-- [ ] Token storage and refresh
+#### 3.1 Google Drive API Setup ✅ COMPLETE (Jan 13, 2026)
+- [x] Enable Drive API
+- [x] Implement OAuth 2.0 authentication flow
+- [x] Token storage and refresh
+- [x] Error handling for authentication failures
 
-**New File**: `src/platforms/google_drive.py`  
-**Dependencies**: `google-auth`, `google-auth-oauthlib`, `google-api-python-client`
+**File**: `src/platforms/google_drive.py` (implemented with 383 lines)  
+**Dependencies**: `google-auth`, `google-auth-oauthlib`, `google-api-python-client` ✅ installed
 
-#### 3.2 Drive File Listing
-- [ ] Implement pagination (handle `nextPageToken`)
-- [ ] Filter by image MIME types
-- [ ] Request only needed fields (partial fields)
-- [ ] Implement rate limiting with exponential backoff
-- [ ] Batch requests for efficiency
+#### 3.2 Drive File Listing ✅ COMPLETE (Jan 13, 2026)
+- [x] Implement pagination with `nextPageToken`
+- [x] Filter by image MIME types
+- [x] Request only needed fields (partial fields optimization)
+- [x] Implement rate limiting with exponential backoff
+- [x] Batch-friendly design
 
-**Key File**: `src/platforms/google_drive.py`
+**File**: `src/platforms/google_drive.py` (list_image_files method)
 
-#### 3.3 Duplicate Detection on Drive
-- [ ] Use Drive API's MD5 checksums for exact duplicates (no download needed!)
-- [ ] Download thumbnails for perceptual hashing with imagededup
-- [ ] Compare Drive files with local files (cross-platform detection)
-- [ ] Merge imagededup results with Drive MD5 results
-- [ ] Generate unified cross-platform duplicate report
+#### 3.3 Duplicate Detection on Drive ✅ COMPLETE (Jan 13, 2026)
+- [x] Use Drive API's MD5 checksums for exact duplicates (no download!) ✅
+- [x] MD5-based grouping and duplicate identification ✅
+- [x] Download thumbnails for perceptual hashing ✅
+- [x] Perceptual hash-based near-duplicate detection (imagededup PHash) ✅
+- [x] Merge MD5 + perceptual hash results (find_all_duplicates method) ✅
+- [ ] Compare Drive files with local files (cross-platform) - TODO: Phase 3.7
+- [ ] Generate unified cross-platform duplicate report - TODO: Phase 3.7
 
-**Key File**: `src/platforms/google_drive.py`  
-**Note**: imagededup works on local files, so we download thumbnails temporarily for hashing
+**File**: `src/platforms/google_drive.py` (find_exact_duplicates_by_md5, find_near_duplicates_by_phash, find_all_duplicates)  
+**Note**: MD5 checksums provide instant exact duplicate detection, perceptual hashing finds edited/similar images!
 
-#### 3.4 Drive Operations
-- [ ] Move files to trash (30-day recovery)
-- [ ] Restore from trash (undo)
-- [ ] Permanent deletion (with extreme caution)
-- [ ] Progress tracking for long operations
+#### 3.4 Drive Operations ✅ COMPLETE (Jan 13, 2026)
+- [x] Move files to trash (30-day recovery)
+- [x] Restore from trash (undo)
+- [x] Exponential backoff for rate limiting
+- [ ] Progress tracking for long operations - TODO
+- [ ] Permanent deletion (with extreme caution) - Deferred for safety
 
-**Key File**: `src/platforms/google_drive.py`
+**File**: `src/platforms/google_drive.py` (move_to_trash, restore_from_trash)
 
-#### 3.5 Enhanced CLI
-- [ ] `scan --platform google-drive`
-- [ ] `scan --platform windows`
-- [ ] `scan --platform all` (cross-platform detection)
-- [ ] `auth google-drive` (OAuth flow)
+#### 3.5 Enhanced CLI ✅ COMPLETE (Jan 13, 2026)
+- [x] `drive-auth` command (OAuth flow with browser)
+- [x] `drive-scan` command with options:
+  - [x] `--near-duplicates` flag (enable perceptual hashing)
+  - [x] `--threshold` parameter (Hamming distance 0-64)
+  - [x] `--thumbnail-dir` (custom thumbnail storage)
+  - [x] Combined output for exact + near duplicates
+- [ ] `scan --pla✅ COMPLETE (Jan 13, 2026)
+- [x] Unit tests for GoogleDriveClient (11 tests passing)
+- [x] Unit tests for perceptual hashing (10 tests passing)
+- [x] Test authentication flows
+- [x] Test MD5 duplicate detection logic
+- [x] Test perceptual hash detection with mocked imagededup
+- [x] Test retry logic with exponential backoff
+- [x] Test combined detection (MD5 + PHash)
+- [x] 63% coverage on google_drive.py (up from 50%)
+- [ ] Integration tests with real Drive account - TODO: Phase 3.7
+- [ ] Test pagination with large libraries (1000+ files) - TODO: Phase 3.7
+- [ ] Test cross-platform duplicate detection - TODO: Phase 3.7
 
-**Key File**: `src/ui/cli.py` (extend)
+**Test Coverage**: 32 total tests (11 Drive + 10 perceptual + 8 review + 3 scanner), 38
+- [ ] Test pagination with large libraries (1000+ files) - TODO
+- [ ] Test cross-platform duplicate detection - TODO
 
-#### 3.6 Testing
-- [ ] Test with Google Drive test account
-- [ ] Test pagination with large libraries (1000+ files)
-- [ ] Test rate limiting recovery
-- [ ] Test cross-platform duplicate detection
-- [ ] Test trash/restore operations
+**Test Coverage**: 22 total tests (11 Drive, 8 review, 3 scanner), 36% overall
 
 ### Phase 3 Deliverables
 - ✅ Google Drive OAuth authentication

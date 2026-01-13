@@ -437,6 +437,300 @@ def confirm_delete(
         sys.exit(1)
 
 
+@cli.command(name="drive-auth")
+@click.option(
+    "--credentials",
+    "-c",
+    type=click.Path(exists=True, path_type=Path),
+    help="Path to OAuth 2.0 credentials JSON file",
+)
+@click.pass_context
+def drive_auth(ctx: click.Context, credentials: Optional[Path]) -> None:
+    """
+    Authenticate with Google Drive.
+
+    Sets up OAuth 2.0 authentication for Google Drive access.
+    Opens a browser window for you to authorize the application.
+
+    To get credentials:
+    1. Go to https://console.cloud.google.com/apis/credentials
+    2. Create OAuth 2.0 Client ID (Desktop application)
+    3. Download the JSON file
+
+    Example:
+        image-organizer drive-auth --credentials ~/Downloads/credentials.json
+    """
+    from image_organizer.platforms.google_drive import GoogleDriveClient
+
+    try:
+        client = GoogleDriveClient(credentials_file=credentials)
+        console.print("[cyan]Starting OAuth authentication...[/cyan]")
+        console.print("[dim]A browser window will open. Please authorize the application.[/dim]\n")
+        
+        success = client.authenticate()
+        
+        if success:
+            console.print("[bold green]✓ Authentication successful![/bold green]")
+            console.print(f"[dim]Token saved to: {client.token_file}[/dim]")
+        else:
+            console.print("[red]✗ Authentication failed.[/red]")
+            sys.exit(1)
+    
+    except Exception as e:
+        console.print(f"[red]✗ Error during authentication:[/red] {e}")
+        sys.exit(1)
+
+
+@cli.command(name="drive-scan")
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path),
+    help="Output file for duplicate report (JSON)",
+)
+@click.option(
+    "--max-files",
+    type=int,
+    help="Maximum number of files to scan (for testing)",
+)
+@click.option(
+    "--detect-duplicates/--list-only",
+    default=True,
+    help="Detect duplicates or just list files",
+)
+@click.option(
+    "--near-duplicates/--exact-only",
+    default=False,
+    help="Also detect near-duplicates using perceptual hashing (slower)",
+)
+@click.option(
+    "--threshold",
+    "-t",
+    type=int,
+    default=10,
+    help="Perceptual hash distance threshold (0-64, lower = more similar)",
+)
+@click.option(
+    "--thumbnail-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Directory to store thumbnails (default: temp directory)",
+)
+@click.pass_context
+def drive_scan(
+    ctx: click.Context,
+    output: Optional[Path],
+    max_files: Optional[int],
+    detect_duplicates: bool,
+    near_duplicates: bool,
+    threshold: int,
+    thumbnail_dir: Optional[Path],
+) -> None:
+    """
+    Scan Google Drive for duplicate images.
+
+    Lists all images in your Google Drive and detects exact duplicates
+    using MD5 checksums (no download required). Optionally detects
+    near-duplicates using perceptual hashing (requires thumbnail downloads).
+
+    Examples:
+        # Exact duplicates only (fast)
+        image-organizer drive-scan --output duplicates.json
+        
+        # Include near-duplicates (slower, more comprehensive)
+        image-organizer drive-scan --near-duplicates --threshold 10
+        
+        # Just list files without detection
+        image-organizer drive-scan --list-only
+    """
+    from image_organizer.platforms.google_drive import GoogleDriveClient
+    import tempfile
+
+    try:
+        # Authenticate
+        client = GoogleDriveClient()
+        if not client.authenticate():
+            console.print("[red]✗ Authentication failed. Run 'drive-auth' first.[/red]")
+            sys.exit(1)
+        
+        # List files
+        console.print("[cyan]Scanning Google Drive for images...[/cyan]")
+        files = client.list_image_files(max_results=max_files)
+        
+        console.print(f"[bold green]✓ Found {len(files)} image files in Google Drive[/bold green]\n")
+        
+        # Show sample
+        if files:
+            table = Table(title="Sample Files", show_header=True, header_style="bold cyan")
+            table.add_column("#", width=4)
+            table.add_column("Name")
+            table.add_column("Size", justify="right")
+            table.add_column("Modified", justify="right")
+            
+            for i, file in enumerate(files[:10], 1):
+                size_mb = int(file.get("size", 0)) / (1024 * 1024)
+                modified = file.get("modifiedTime", "Unknown")[:10]
+                table.add_row(
+                    str(i),
+                    file.get("name", "Unknown"),
+                    f"{size_mb:.2f} MB",
+                    modified,
+                )
+            
+            console.print(table)
+            
+            if len(files) > 10:
+                console.print(f"[dim]... and {len(files) - 10} more files[/dim]\n")
+        
+        # Detect duplicates if requested
+        if detect_duplicates and files:
+            if near_duplicates:
+                # Use combined detection (MD5 + perceptual hash)
+                console.print("[cyan]Detecting duplicates (MD5 + perceptual hashing)...[/cyan]")
+                console.print(f"[dim]This may take a while for large libraries...[/dim]\n")
+                
+                # Use temp directory if not specified
+                if thumbnail_dir is None:
+                    thumbnail_dir = Path(tempfile.mkdtemp(prefix="image_organizer_"))
+                    console.print(f"[dim]Using temp directory: {thumbnail_dir}[/dim]\n")
+                
+                results = client.find_all_duplicates(
+                    files,
+                    thumbnail_dir=thumbnail_dir,
+                    phash_threshold=threshold,
+                    include_near_duplicates=True,
+                )
+                
+                exact_dupes = results['exact']
+                near_dupes = results['near']
+                stats = results['stats']
+                
+                # Display results
+                console.print("\n[bold cyan]═══ Exact Duplicates (MD5) ═══[/bold cyan]")
+                if exact_dupes:
+                    # Calculate space savings
+                    total_duplicate_size = 0
+                    for md5, dup_files in exact_dupes.items():
+                        file_size = int(dup_files[0].get("size", 0))
+                        num_duplicates = len(dup_files) - 1
+                        total_duplicate_size += file_size * num_duplicates
+                    
+                    savings_mb = total_duplicate_size / (1024 * 1024)
+                    
+                    console.print(
+                        f"[bold green]✓ Found {stats['exact_duplicate_groups']} groups "
+                        f"({stats['exact_duplicate_files']} duplicate files)[/bold green]"
+                    )
+                    console.print(f"[yellow]Space savings: {savings_mb:.1f} MB[/yellow]\n")
+                    
+                    # Show sample
+                    sample_md5, sample_files = next(iter(exact_dupes.items()))
+                    console.print("[cyan]Example exact duplicate group:[/cyan]")
+                    for i, file in enumerate(sample_files[:3], 1):
+                        console.print(f"  {i}. {file.get('name')}")
+                    if len(sample_files) > 3:
+                        console.print(f"  ... and {len(sample_files) - 3} more")
+                else:
+                    console.print("[yellow]No exact duplicates found[/yellow]")
+                
+                console.print("\n[bold cyan]═══ Near-Duplicates (Perceptual Hash) ═══[/bold cyan]")
+                if near_dupes:
+                    console.print(
+                        f"[bold green]✓ Found {stats['near_duplicate_groups']} files with similar images "
+                        f"({stats['near_duplicate_pairs']} total pairs)[/bold green]\n"
+                    )
+                    
+                    # Show sample
+                    sample_id, similar_files = next(iter(near_dupes.items()))
+                    sample_file = next(f for f in files if f['id'] == sample_id)
+                    console.print("[cyan]Example near-duplicate group:[/cyan]")
+                    console.print(f"  Original: {sample_file.get('name')}")
+                    console.print(f"  Similar to:")
+                    for i, sim in enumerate(similar_files[:3], 1):
+                        console.print(f"    {i}. {sim.get('name')}")
+                    if len(similar_files) > 3:
+                        console.print(f"    ... and {len(similar_files) - 3} more")
+                else:
+                    console.print("[yellow]No near-duplicates found[/yellow]")
+                
+                # Save to JSON if requested
+                if output:
+                    output_data = {
+                        "exact_duplicates": {
+                            md5: [{"id": f["id"], "name": f["name"], "size": f.get("size")} 
+                                  for f in files_list]
+                            for md5, files_list in exact_dupes.items()
+                        },
+                        "near_duplicates": {
+                            file_id: [{"id": f["id"], "name": f["name"]} 
+                                      for f in similar]
+                            for file_id, similar in near_dupes.items()
+                        },
+                        "stats": stats,
+                    }
+                    output.write_text(json.dumps(output_data, indent=2))
+                    console.print(f"\n[green]✓ Results saved to:[/green] {output}")
+                
+            else:
+                # Fast MD5-only detection
+                console.print("[cyan]Detecting exact duplicates by MD5 checksum...[/cyan]")
+                duplicates = client.find_exact_duplicates_by_md5(files)
+                
+                if duplicates:
+                    # Calculate space savings
+                    total_duplicate_size = 0
+                    for md5, dup_files in duplicates.items():
+                        # Keep one, delete the rest
+                        file_size = int(dup_files[0].get("size", 0))
+                        num_duplicates = len(dup_files) - 1
+                        total_duplicate_size += file_size * num_duplicates
+                    
+                    savings_mb = total_duplicate_size / (1024 * 1024)
+                    
+                    console.print(
+                        f"[bold green]✓ Found {len(duplicates)} duplicate groups[/bold green]\n"
+                    )
+                    console.print(
+                        f"[yellow]Potential space savings: {savings_mb:.1f} MB[/yellow]\n"
+                    )
+                    
+                    # Show sample duplicate group
+                    sample_md5, sample_files = next(iter(duplicates.items()))
+                    console.print("[cyan]Example duplicate group:[/cyan]")
+                    for i, file in enumerate(sample_files, 1):
+                        console.print(f"  {i}. {file.get('name')}")
+                    
+                    # Save to JSON if requested
+                    if output:
+                        # Convert to standard format
+                        json_duplicates = {}
+                        for md5, dup_files in duplicates.items():
+                            # Use first file as "original"
+                            original = dup_files[0]
+                            others = dup_files[1:]
+                            
+                            json_duplicates[original["id"]] = [
+                                {
+                                    "id": f["id"],
+                                    "name": f["name"],
+                                    "size": f.get("size"),
+                                    "md5": md5,
+                                }
+                                for f in others
+                            ]
+                        
+                        _save_duplicates_json(json_duplicates, output)
+                        console.print(f"\n[green]✓ Results saved to:[/green] {output}")
+                else:
+                    console.print("[yellow]No duplicates found![/yellow]")
+    
+    except Exception as e:
+        console.print(f"[red]✗ Error scanning Drive:[/red] {e}")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
+        sys.exit(1)
+
+
 def _display_duplicate_results(duplicates: dict) -> None:
     """Display duplicate detection results in a formatted table."""
     console.print(f"[bold green]Found {len(duplicates)} duplicate groups:[/bold green]\n")

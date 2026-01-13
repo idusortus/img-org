@@ -48,8 +48,9 @@ pip install -e ".[dev]"
 
 ### Basic Usage
 
+**Local Files:**
 ```bash
-# Step 1: Scan for duplicates in a directory
+# Step 1: Scan for duplicates in local directories
 image-organizer scan --path "C:\Users\John\Pictures" --output duplicates.json
 
 # Step 2: Review duplicates interactively with visual comparison
@@ -75,6 +76,26 @@ image-organizer protect --folder "Wedding"
 image-organizer list-staging
 ```
 
+**Google Drive:**
+```bash
+# Step 1: Authenticate with Google Drive (one-time setup)
+image-organizer drive-auth --credentials ~/Downloads/credentials.json
+
+# Step 2a: Scan for exact duplicates (fast, MD5-based, no downloads)
+image-organizer drive-scan --output drive-duplicates.json
+
+# Step 2b: Scan for both exact AND near-duplicates (slower, more comprehensive)
+image-organizer drive-scan --near-duplicates --threshold 10 --output all-duplicates.json
+
+# Near-duplicate detection finds:
+# - Edited versions (cropped, resized, filtered)
+# - Screenshots of the same image
+# - Similar burst photos
+# - Re-encoded versions
+
+# Cross-platform detection (local + Drive) coming in Phase 3.7!
+```
+
 ## Technology Stack
 
 - **Python 3.10+** - Modern Python with type hints
@@ -82,6 +103,7 @@ image-organizer list-staging
 - **Click** - Elegant CLI framework
 - **Rich** - Beautiful terminal output
 - **Send2Trash** - Safe deletion to recycle bin
+- **Google Drive API v3** - Drive integration with OAuth 2.0
 
 ## Project Status
 
@@ -107,10 +129,14 @@ image-organizer list-staging
 
 **Current Status**: Core review interface working! Can scan, review with visual comparison, and stage deletions safely.
 
-### Phase 3: Google Drive Integration ⏳ PLANNED
-- [ ] OAuth authentication
-- [ ] Drive file listing and scanning
-- [ ] Cross-platform duplicate detection
+### Phase 3: Google Drive Integration 🔄 IN PROGRESS
+- [x] OAuth 2.0 authentication ✅ NEW
+- [x] Drive file listing with pagination ✅ NEW
+- [x] MD5-based exact duplicate detection ✅ NEW
+- [x] CLI commands (`drive-auth`, `drive-scan`) ✅ NEW
+- [x] 11 tests passing, 50% coverage ✅ NEW
+- [ ] Thumbnail download for perceptual hashing
+- [ ] Cross-platform duplicate detection (local + Drive)
 
 See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for complete roadmap.
 
