@@ -164,6 +164,9 @@ image-organizer drive-scan --max-files 10 --list-only
 # Find exact duplicates (fast, no downloads)
 image-organizer drive-scan --output drive-duplicates.json
 
+# Scan for document duplicates (Word, Excel, PDF, etc.)
+image-organizer drive-scan-docs --output docs-duplicates.json
+
 # Scan specific folder by name (finds first match)
 image-organizer drive-scan --folder-name "2024 Photos" --output 2024-dups.json
 
@@ -186,9 +189,6 @@ image-organizer drive-scan --mime-type "image/jpeg,image/png"
 
 # Exclude GIFs (useful to skip memes/reaction images)
 image-organizer drive-scan --exclude-mime-type "image/gif"
-
-# Find exact + near-duplicates (slower, downloads thumbnails)
-image-organizer drive-scan --near-duplicates --threshold 10
 ```
 
 **Supported MIME types:**
@@ -242,24 +242,56 @@ image-organizer protect --help
 image-organizer drive-auth --credentials ~/credentials.json
 
 # 2. Scan entire Drive for duplicates
-image-organizer drive-scan --near-duplicates --output drive-dups.json
+image-organizer drive-scan --output drive-dups.json
 
-# 3. Scan specific folder (e.g., organized by year)
+# 3. Scan for document duplicates (Word, PDF, Excel, PowerPoint, etc.)
+image-organizer drive-scan-docs --output docs-dups.json
+
+# 4. Move duplicates to a review folder (safest option)
+image-organizer drive-move-duplicates --input drive-dups.json --keep-strategy newest
+
+# 5. Or move duplicates to trash (30-day recovery)
+image-organizer drive-trash --input drive-dups.json --keep-strategy largest
+
+# 6. Scan specific folder (e.g., organized by year)
 image-organizer drive-scan --folder-name "2024" --output 2024-dups.json
 image-organizer drive-scan --folder-name "2023" --output 2023-dups.json
 
-# 4. Scan folder without checking subfolders
+# 7. Scan folder without checking subfolders
 image-organizer drive-scan --folder-name "Camera Uploads" --no-recursive
 
-# 5. Only scan JPEG photos (fastest, skip other formats)
+# 8. Only scan JPEG photos (fastest, skip other formats)
 image-organizer drive-scan --folder-name "2024" --mime-type "image/jpeg"
 
-# 6. Exclude GIFs from comparison (skip memes)
+# 9. Exclude GIFs from comparison (skip memes)
 image-organizer drive-scan --folder-name "2024" --exclude-mime-type "image/gif"
-
-# 7. Review results
-# (Integration with review UI coming in Phase 3.7)
 ```
+
+### Cross-Platform Scanning (Local + Drive)
+
+**NEW**: Find files that exist in BOTH your local computer AND Google Drive
+
+```bash
+# 1. Authenticate with Google Drive first
+image-organizer drive-auth
+
+# 2. Scan local directory and Drive for duplicates
+image-organizer cross-platform-scan --local-path ~/Pictures --output cross-dups.json
+
+# Or scan Downloads folder
+image-organizer cross-platform-scan --local-path ~/Downloads --output downloads-dups.json
+
+# 3. Review JSON results to see which files exist in both locations
+# You can then decide to:
+# - Delete local copies (free up disk space)
+# - Delete Drive copies (free up cloud storage)
+```
+
+**Use Cases:**
+- **Free up local disk space** - Keep Drive copies, delete local files
+- **Identify backed-up files** - See what's already safely in Drive
+- **Optimize cloud storage** - Remove Drive copies if you have local backups
+- **Verify sync accuracy** - Confirm files are identical across platforms
 
 **Tip for Large Libraries**: If you have photos organized in year/month folders, scan each folder separately:
 - Faster results (processes fewer files at once)

@@ -1255,6 +1255,586 @@ def drive_move_duplicates(
         sys.exit(1)
 
 
+@cli.command(name="drive-trash")
+@click.option(
+    "--input",
+    "-i",
+    "input_file",
+    required=True,
+    type=click.Path(exists=True, path_type=Path),
+    help="JSON file from drive-scan or drive-scan-docs",
+)
+@click.option(
+    "--keep-strategy",
+    type=click.Choice(["first", "last", "newest", "oldest", "largest", "smallest"]),
+    default="first",
+    help="Which file to keep (others will be trashed)",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show what would be trashed without actually trashing files",
+)
+@click.option(
+    "--confirm",
+    is_flag=True,
+    help="Skip confirmation prompt (use with caution!)",
+)
+@click.pass_context
+def drive_trash(
+    ctx: click.Context,
+    input_file: Path,
+    keep_strategy: str,
+    dry_run: bool,
+    confirm: bool,
+) -> None:
+    """
+    Move duplicate files to Google Drive trash (30-day recovery).
+    
+    This command trashes duplicates detected by drive-scan or drive-scan-docs.
+    One file from each duplicate group is kept based on the keep strategy.
+    
+    Trashed files remain in Google Drive trash for 30 days and can be restored.
+    After 30 days, they are permanently deleted by Google.
+    
+    Examples:
+        # Trash duplicates, keep first file
+        image-organizer drive-trash --input docs-scan-001.json
+        
+        # Keep newest version, trash others
+        image-organizer drive-trash \\
+            --input full-scan-001.json \\
+            --keep-strategy newest
+        
+        # Dry run to preview
+        image-organizer drive-trash \\
+            --input docs-scan-001.json \\
+            --keep-strategy largest \\
+            --dry-run
+        
+        # Skip confirmation (careful!)
+        image-organizer drive-trash \\
+            --input scan.json \\
+            --keep-strategy newest \\
+            --confirm
+    """
+    from image_organizer.platforms.google_drive import GoogleDriveClient
+
+    try:
+        # Load duplicates JSON
+        with input_file.open("r") as f:
+            duplicates = json.load(f)
+        
+        if not duplicates:
+            console.print("[yellow]No duplicates found in input file.[/yellow]")
+            return
+        
+        # Count files
+        duplicate_count = sum(len(files) - 1 for files in duplicates.values())
+        total_size = sum(
+            int(file.get("size", 0)) * (len(files) - 1)
+            for files in duplicates.values()
+            for file in files[:1]  # Get size from first file
+        )
+        size_mb = total_size / (1024 * 1024)
+        size_gb = size_mb / 1024
+        
+        console.print(f"[cyan]Loaded {len(duplicates)} duplicate groups ({duplicate_count} files to trash)[/cyan]")
+        console.print(f"[yellow]💾 Space to recover: {size_gb:.2f} GB ({size_mb:.0f} MB)[/yellow]\n")
+        
+        # Show strategy
+        strategy_desc = {
+            "first": "first file in each group",
+            "last": "last file in each group",
+            "newest": "newest file (by modified date)",
+            "oldest": "oldest file (by modified date)",
+            "largest": "largest file (by size)",
+            "smallest": "smallest file (by size)",
+        }
+        console.print(f"[bold]Keep strategy:[/bold] {strategy_desc[keep_strategy]}\n")
+        
+        # Show sample
+        console.print("[bold cyan]Sample of files to trash:[/bold cyan]")
+        table = Table(show_header=True, header_style="bold yellow")
+        table.add_column("Group", width=6)
+        table.add_column("Action", width=8)
+        table.add_column("File Name", width=50)
+        table.add_column("Size", justify="right", width=10)
+        
+        for group_num, (md5, file_list) in enumerate(list(duplicates.items())[:3], 1):
+            keep_idx = 0  # Simplified for preview
+            
+            for i, file in enumerate(file_list):
+                action = "[green]KEEP[/green]" if i == keep_idx else "[red]TRASH[/red]"
+                size_bytes = int(file.get("size", 0))
+                size_mb = size_bytes / (1024 * 1024)
+                size_display = f"{size_mb:.2f} MB" if size_mb >= 0.01 else f"{size_bytes / 1024:.1f} KB"
+                
+                name_display = file.get("name", "Unknown")
+                if len(name_display) > 50:
+                    name_display = name_display[:47] + "..."
+                
+                table.add_row(
+                    f"{group_num}" if i == 0 else "",
+                    action,
+                    name_display,
+                    size_display,
+                )
+        
+        console.print(table)
+        
+        if len(duplicates) > 3:
+            console.print(f"[dim]... and {len(duplicates) - 3} more groups[/dim]\n")
+        
+        # Confirmation
+        if not dry_run and not confirm:
+            console.print("[bold red]⚠️  WARNING: This will move files to Google Drive trash![/bold red]")
+            console.print("[yellow]Files remain in trash for 30 days before permanent deletion.[/yellow]")
+            console.print("[yellow]You can restore from trash via Google Drive web interface.[/yellow]")
+            response = click.prompt(
+                "\nProceed with trashing duplicates?",
+                type=click.Choice(["yes", "no"], case_sensitive=False),
+                default="no"
+            )
+            if response.lower() != "yes":
+                console.print("[yellow]Cancelled by user.[/yellow]")
+                return
+        
+        if dry_run:
+            console.print("\n[bold cyan]🔍 DRY RUN - No files will be trashed[/bold cyan]")
+            console.print(f"[dim]Would trash {duplicate_count} files[/dim]")
+            console.print(f"[dim]Would keep {len(duplicates)} files in original locations[/dim]")
+            console.print(f"[dim]Would recover {size_gb:.2f} GB[/dim]")
+            return
+        
+        # Authenticate
+        client = GoogleDriveClient()
+        if not client.authenticate():
+            console.print("[red]✗ Authentication failed. Run 'drive-auth' first.[/red]")
+            sys.exit(1)
+        
+        # Trash duplicates
+        console.print("\n[cyan]Trashing duplicates...[/cyan]")
+        with console.status("[bold green]Processing..."):
+            trashed, kept = client.trash_duplicates(
+                duplicates,
+                keep_strategy=keep_strategy,
+            )
+        
+        # Show results
+        console.print(f"\n[bold green]✓ Successfully trashed {trashed} files![/bold green]")
+        console.print(f"[green]✓ Kept {kept} files in original locations[/green]")
+        console.print(f"[yellow]💾 Recovered {size_gb:.2f} GB ({size_mb:.0f} MB)[/yellow]")
+        console.print(f"\n[cyan]💡 Tip:[/cyan] View trash at https://drive.google.com/drive/trash")
+        console.print(f"[cyan]💡 Tip:[/cyan] Files will be permanently deleted after 30 days")
+        console.print(f"[cyan]💡 Tip:[/cyan] Restore files from trash before 30 days if needed")
+        
+    except json.JSONDecodeError as e:
+        console.print(f"[red]✗ Invalid JSON file:[/red] {e}")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]✗ Error trashing duplicates:[/red] {e}")
+        logger.exception("Drive trash error")
+        sys.exit(1)
+
+
+@cli.command(name="drive-execute")
+@click.option(
+    "--input",
+    "-i",
+    "input_file",
+    required=True,
+    type=click.Path(exists=True, path_type=Path),
+    help="JSON file with duplicates (can be edited to select specific files)",
+)
+@click.option(
+    "--action",
+    type=click.Choice(["move", "trash"]),
+    required=True,
+    help="Action to perform: move to folder or trash",
+)
+@click.option(
+    "--folder-name",
+    type=str,
+    help="Folder name for move action (auto-generated if not specified)",
+)
+@click.option(
+    "--keep-strategy",
+    type=click.Choice(["first", "last", "newest", "oldest", "largest", "smallest"]),
+    default="first",
+    help="Which file to keep in each group",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show what would be done without executing",
+)
+@click.option(
+    "--confirm",
+    is_flag=True,
+    help="Skip confirmation prompt (use with caution!)",
+)
+@click.pass_context
+def drive_execute(
+    ctx: click.Context,
+    input_file: Path,
+    action: str,
+    folder_name: Optional[str],
+    keep_strategy: str,
+    dry_run: bool,
+    confirm: bool,
+) -> None:
+    """
+    Execute operations on duplicate files from edited JSON.
+    
+    This command processes a duplicate JSON file (from drive-scan or drive-scan-docs)
+    and performs the specified action. You can edit the JSON first to:
+    - Remove entire duplicate groups (if you want to keep all files in that group)
+    - Remove specific files from groups (mark which ones to keep/delete)
+    - Reorder files (affects "first"/"last" keep strategy)
+    
+    Examples:
+        # Move duplicates to folder
+        image-organizer drive-execute \\
+            --input docs-scan-001.json \\
+            --action move \\
+            --folder-name "Review"
+        
+        # Trash duplicates
+        image-organizer drive-execute \\
+            --input edited-scan.json \\
+            --action trash \\
+            --keep-strategy newest
+        
+        # Dry run to preview
+        image-organizer drive-execute \\
+            --input scan.json \\
+            --action trash \\
+            --dry-run
+    """
+    from image_organizer.platforms.google_drive import GoogleDriveClient
+
+    try:
+        # Load and validate JSON
+        with input_file.open("r") as f:
+            duplicates = json.load(f)
+        
+        if not duplicates:
+            console.print("[yellow]No duplicates found in input file.[/yellow]")
+            return
+        
+        # Validate structure
+        for md5, files in duplicates.items():
+            if not isinstance(files, list):
+                console.print(f"[red]✗ Invalid JSON structure: expected list of files for MD5 {md5}[/red]")
+                sys.exit(1)
+            for file in files:
+                if "id" not in file or "name" not in file:
+                    console.print(f"[red]✗ Invalid file entry: missing 'id' or 'name'[/red]")
+                    sys.exit(1)
+        
+        # Count operations
+        duplicate_count = sum(len(files) - 1 for files in duplicates.values())
+        total_size = sum(
+            int(file.get("size", 0)) * (len(files) - 1)
+            for files in duplicates.values()
+            for file in files[:1]
+        )
+        size_mb = total_size / (1024 * 1024)
+        size_gb = size_mb / 1024
+        
+        console.print(f"[cyan]Loaded {len(duplicates)} duplicate groups ({duplicate_count} files)[/cyan]")
+        console.print(f"[yellow]💾 Potential space recovery: {size_gb:.2f} GB ({size_mb:.0f} MB)[/yellow]\n")
+        console.print(f"[bold]Action:[/bold] {action}")
+        console.print(f"[bold]Keep strategy:[/bold] {keep_strategy}\n")
+        
+        # Show preview
+        action_verb = "MOVE" if action == "move" else "TRASH"
+        console.print(f"[bold cyan]Preview ({action_verb}):[/bold cyan]")
+        
+        table = Table(show_header=True, header_style="bold yellow")
+        table.add_column("Group", width=6)
+        table.add_column("Action", width=8)
+        table.add_column("File Name", width=50)
+        
+        for group_num, (md5, file_list) in enumerate(list(duplicates.items())[:5], 1):
+            keep_idx = 0  # Simplified
+            
+            for i, file in enumerate(file_list):
+                action_display = "[green]KEEP[/green]" if i == keep_idx else f"[yellow]{action_verb}[/yellow]"
+                name_display = file.get("name", "Unknown")
+                if len(name_display) > 50:
+                    name_display = name_display[:47] + "..."
+                
+                table.add_row(
+                    f"{group_num}" if i == 0 else "",
+                    action_display,
+                    name_display,
+                )
+        
+        console.print(table)
+        
+        if len(duplicates) > 5:
+            console.print(f"[dim]... and {len(duplicates) - 5} more groups[/dim]\n")
+        
+        # Confirmation
+        if not dry_run and not confirm:
+            console.print(f"[bold yellow]⚠️  This will {action} files in Google Drive![/bold yellow]")
+            if action == "trash":
+                console.print("[yellow]Files will go to trash (30-day recovery window)[/yellow]")
+            response = click.prompt(
+                f"\nProceed with {action} operation?",
+                type=click.Choice(["yes", "no"], case_sensitive=False),
+                default="no"
+            )
+            if response.lower() != "yes":
+                console.print("[yellow]Cancelled by user.[/yellow]")
+                return
+        
+        if dry_run:
+            console.print(f"\n[bold cyan]🔍 DRY RUN - No files will be {action}ed[/bold cyan]")
+            console.print(f"[dim]Would {action} {duplicate_count} files[/dim]")
+            return
+        
+        # Authenticate
+        client = GoogleDriveClient()
+        if not client.authenticate():
+            console.print("[red]✗ Authentication failed. Run 'drive-auth' first.[/red]")
+            sys.exit(1)
+        
+        # Execute action
+        console.print(f"\n[cyan]Executing {action} operation...[/cyan]")
+        
+        if action == "move":
+            with console.status("[bold green]Processing..."):
+                moved, kept, folder_id = client.move_duplicates_to_folder(
+                    duplicates,
+                    folder_name=folder_name,
+                    keep_strategy=keep_strategy,
+                )
+            console.print(f"\n[bold green]✓ Successfully moved {moved} files![/bold green]")
+            console.print(f"[green]✓ Kept {kept} files in original locations[/green]")
+            console.print(f"\n[cyan]Review folder:[/cyan] https://drive.google.com/drive/folders/{folder_id}")
+        
+        elif action == "trash":
+            with console.status("[bold green]Processing..."):
+                trashed, kept = client.trash_duplicates(
+                    duplicates,
+                    keep_strategy=keep_strategy,
+                )
+            console.print(f"\n[bold green]✓ Successfully trashed {trashed} files![/bold green]")
+            console.print(f"[green]✓ Kept {kept} files in original locations[/green]")
+            console.print(f"[yellow]💾 Recovered {size_gb:.2f} GB ({size_mb:.0f} MB)[/yellow]")
+            console.print(f"\n[cyan]View trash:[/cyan] https://drive.google.com/drive/trash")
+        
+    except json.JSONDecodeError as e:
+        console.print(f"[red]✗ Invalid JSON file:[/red] {e}")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]✗ Error executing operation:[/red] {e}")
+        logger.exception("Drive execute error")
+        sys.exit(1)
+
+
+@cli.command("cross-platform-scan")
+@click.option(
+    "--local-path",
+    "-l",
+    required=True,
+    type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
+    help="Local directory to scan for images",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path),
+    help="Output JSON file (default: cross-platform-scan-<timestamp>.json)",
+)
+@click.option(
+    "--extensions",
+    "-e",
+    multiple=True,
+    default=[".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".heic"],
+    help="File extensions to scan (default: common image formats)",
+)
+def cross_platform_scan(
+    local_path: Path,
+    output: Optional[Path],
+    extensions: tuple,
+) -> None:
+    """
+    Scan for duplicates across local files AND Google Drive.
+    
+    This finds files that exist in BOTH locations, helping you:
+    - Free up local disk space by keeping cloud copies
+    - Identify files already backed up to Drive
+    - Optimize storage across platforms
+    
+    Examples:
+      # Scan Pictures folder and Google Drive
+      image-organizer cross-platform-scan --local-path C:\\Users\\John\\Pictures
+      
+      # Scan Downloads and save results
+      image-organizer cross-platform-scan -l ~/Downloads -o duplicates.json
+    """
+    from datetime import datetime
+    from image_organizer.core.cross_platform import CrossPlatformDetector
+    from image_organizer.platforms.google_drive import GoogleDriveClient
+    
+    console.print("[bold cyan]Cross-Platform Duplicate Scanner[/bold cyan]")
+    console.print(f"Local path: {local_path}")
+    console.print(f"Google Drive: Authenticating...\n")
+    
+    # Initialize detector
+    detector = CrossPlatformDetector()
+    
+    # Scan local files
+    console.print("[bold]Scanning local files...[/bold]")
+    local_count = 0
+    
+    with console.status("[bold green]Scanning local directory..."):
+        for ext in extensions:
+            for file_path in local_path.rglob(f"*{ext}"):
+                if file_path.is_file():
+                    try:
+                        # Compute MD5 for local file
+                        md5 = detector._compute_md5(file_path)
+                        size = file_path.stat().st_size
+                        modified = datetime.fromtimestamp(file_path.stat().st_mtime).isoformat()
+                        
+                        detector.add_local_file(
+                            path=file_path,
+                            md5=md5,
+                            size=size,
+                            modified=modified,
+                        )
+                        local_count += 1
+                    except Exception as e:
+                        logger.warning(f"Skipping {file_path}: {e}")
+    
+    console.print(f"[green]Found {local_count} local image files[/green]\n")
+    
+    # Scan Google Drive
+    console.print("[bold]Scanning Google Drive...[/bold]")
+    
+    try:
+        client = GoogleDriveClient()
+        client.authenticate()  # Authenticate first
+        drive_files = client.list_image_files()
+        
+        console.print(f"[green]OK Found {len(drive_files)} images in Google Drive[/green]\n")
+        
+        # Add Drive files to detector
+        for file_info in drive_files:
+            if file_info.get("md5Checksum"):
+                # Convert size to int (Drive API returns string)
+                file_size = file_info.get("size", 0)
+                if isinstance(file_size, str):
+                    file_size = int(file_size)
+                
+                detector.add_drive_file(
+                    file_id=file_info["id"],
+                    name=file_info["name"],
+                    size=file_size,
+                    md5=file_info["md5Checksum"],
+                    modified=file_info.get("modifiedTime"),
+                    web_url=file_info.get("webViewLink"),
+                )
+        
+    except Exception as e:
+        console.print(f"[red]✗ Error scanning Google Drive:[/red] {e}")
+        logger.exception("Drive scan error")
+        sys.exit(1)
+    
+    # Find cross-platform duplicates
+    console.print("[bold]Detecting cross-platform duplicates...[/bold]")
+    duplicates = detector.find_cross_platform_duplicates()
+    
+    if not duplicates:
+        console.print("[yellow]OK No cross-platform duplicates found![/yellow]")
+        console.print("Your local files and Google Drive are already optimized.")
+        return
+    
+    # Display statistics
+    stats = detector.get_statistics()
+    console.print(f"\n[bold green]OK Found {stats['duplicate_groups']} duplicate groups![/bold green]")
+    console.print(f"[cyan]Total files:[/cyan] {stats['total_files']}")
+    console.print(f"[cyan]Local space:[/cyan] {stats['local_space_mb']:.2f} MB")
+    console.print(f"[cyan]Drive space:[/cyan] {stats['drive_space_mb']:.2f} MB")
+    console.print(f"[yellow]💾 Potential savings:[/yellow] {stats['potential_savings_mb']:.2f} MB\n")
+    
+    # Display sample duplicates
+    table = Table(title="Cross-Platform Duplicates (Sample)", show_header=True)
+    table.add_column("#", style="dim")
+    table.add_column("File Name")
+    table.add_column("Size", justify="right")
+    table.add_column("Local Copies", justify="center")
+    table.add_column("Drive Copies", justify="center")
+    
+    for i, dup in enumerate(duplicates[:15], 1):
+        size_mb = dup.size / (1024 * 1024)
+        table.add_row(
+            str(i),
+            dup.name[:50],
+            f"{size_mb:.2f} MB",
+            str(len(dup.local_files)),
+            str(len(dup.drive_files)),
+        )
+    
+    console.print(table)
+    
+    if len(duplicates) > 15:
+        console.print(f"[dim]... and {len(duplicates) - 15} more duplicate groups[/dim]")
+    
+    # Save results
+    if output is None:
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        output = Path(f"cross-platform-scan-{timestamp}.json")
+    
+    # Convert to JSON-serializable format
+    results = {
+        "scan_date": datetime.now().isoformat(),
+        "local_path": str(local_path),
+        "statistics": stats,
+        "duplicates": [
+            {
+                "md5": dup.md5,
+                "name": dup.name,
+                "size": dup.size,
+                "local_files": [
+                    {
+                        "path": f.path,
+                        "name": f.name,
+                        "size": f.size,
+                        "modified": f.modified,
+                    }
+                    for f in dup.local_files
+                ],
+                "drive_files": [
+                    {
+                        "id": f.path,
+                        "name": f.name,
+                        "size": f.size,
+                        "modified": f.modified,
+                        "url": f.drive_url,
+                    }
+                    for f in dup.drive_files
+                ],
+            }
+            for dup in duplicates
+        ],
+    }
+    
+    with open(output, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2)
+    
+    console.print(f"\n[green]OK Results saved to:[/green] {output}")
+    console.print("\n[cyan]💡 Recommendations:[/cyan]")
+    console.print("  • Review the JSON file to see exact file locations")
+    console.print("  • Keep Drive copies and delete local files to free disk space")
+    console.print("  • Or keep local copies and remove from Drive to save cloud storage")
+
+
 def _display_duplicate_results(duplicates: dict) -> None:
     """Display duplicate detection results in a formatted table."""
     console.print(f"[bold green]Found {len(duplicates)} duplicate groups:[/bold green]\n")

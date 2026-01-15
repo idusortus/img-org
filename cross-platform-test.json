@@ -1,0 +1,48 @@
+{
+  "scan_date": "2026-01-15T12:35:45.873735",
+  "local_path": "C:\\Users\\iduso\\Downloads",
+  "statistics": {
+    "duplicate_groups": 1,
+    "total_files": 4,
+    "local_space_mb": 0.0011348724365234375,
+    "drive_space_mb": 0.0011348724365234375,
+    "potential_savings_mb": 0.0011348724365234375
+  },
+  "duplicates": [
+    {
+      "md5": "e6f8174feec4859576de58cf4a742f9f",
+      "name": "testImage001 - Copy.png",
+      "size": 595,
+      "local_files": [
+        {
+          "path": "C:\\Users\\iduso\\Downloads\\testImage001 - Copy.png",
+          "name": "testImage001 - Copy.png",
+          "size": 595,
+          "modified": "2026-01-15T12:17:23.626822"
+        },
+        {
+          "path": "C:\\Users\\iduso\\Downloads\\testImage001.png",
+          "name": "testImage001.png",
+          "size": 595,
+          "modified": "2026-01-15T12:17:23.626822"
+        }
+      ],
+      "drive_files": [
+        {
+          "id": "1OF1ekkHuJjCwsmpx82_Jj8VEAYXhp2OB",
+          "name": "testImage001.png",
+          "size": 595,
+          "modified": "2026-01-15T18:17:23.000Z",
+          "url": null
+        },
+        {
+          "id": "1kpqbx5bevW8X5_5QxyBDGeQ3bvTZyhX0",
+          "name": "testImage001 - Copy.png",
+          "size": 595,
+          "modified": "2026-01-15T18:17:23.000Z",
+          "url": null
+        }
+      ]
+    }
+  ]
+}
