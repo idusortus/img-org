@@ -3,7 +3,12 @@
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from imagededup.methods import AHash, DHash, PHash, WHash
+try:
+    from imagededup.methods import AHash, DHash, PHash, WHash
+    IMAGEDEDUP_AVAILABLE = True
+except ImportError:
+    IMAGEDEDUP_AVAILABLE = False
+    AHash = DHash = PHash = WHash = None
 
 from image_organizer.utils.config import Config
 from image_organizer.utils.logger import setup_logger
@@ -37,6 +42,13 @@ class DuplicateDetector:
         Returns:
             Hasher instance
         """
+        if not IMAGEDEDUP_AVAILABLE:
+            raise ImportError(
+                "imagededup is not installed. For now, only local scanning with imagededup is supported.\n"
+                "Note: imagededup requires C++ build tools on Windows.\n"
+                "Alternative: Use Google Drive scanning which works without imagededup."
+            )
+        
         hash_methods = {
             "phash": PHash,
             "dhash": DHash,
