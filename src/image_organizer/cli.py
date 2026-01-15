@@ -1,5 +1,6 @@
 """Command-line interface for image-organizer."""
 
+import json
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -483,6 +484,265 @@ def drive_auth(ctx: click.Context, credentials: Optional[Path]) -> None:
         sys.exit(1)
 
 
+@cli.command(name="drive-scan-docs")
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path),
+    help="Output file for duplicate report (JSON)",
+)
+@click.option(
+    "--max-files",
+    type=int,
+    help="Maximum number of files to scan (for testing)",
+)
+@click.option(
+    "--folder-id",
+    type=str,
+    help="Scan only files in this folder (by Drive folder ID)",
+)
+@click.option(
+    "--folder-name",
+    type=str,
+    help="Scan only files in folder with this name (finds first match)",
+)
+@click.option(
+    "--recursive/--no-recursive",
+    default=True,
+    help="Include subfolders (default: True)",
+)
+@click.option(
+    "--mime-type",
+    type=str,
+    help="Only scan specific document type(s), comma-separated (e.g., 'application/pdf,text/csv')",
+)
+@click.option(
+    "--exclude-mime-type",
+    type=str,
+    help="Exclude specific document type(s), comma-separated",
+)
+@click.option(
+    "--detect-duplicates/--list-only",
+    default=True,
+    help="Detect duplicates or just list files",
+)
+@click.pass_context
+def drive_scan_docs(
+    ctx: click.Context,
+    output: Optional[Path],
+    max_files: Optional[int],
+    folder_id: Optional[str],
+    folder_name: Optional[str],
+    recursive: bool,
+    mime_type: Optional[str],
+    exclude_mime_type: Optional[str],
+    detect_duplicates: bool,
+) -> None:
+    """
+    Scan Google Drive for duplicate documents.
+
+    Lists all documents in your Google Drive and detects exact duplicates
+    using MD5 checksums. Supports Word, Excel, PowerPoint, PDF, text files,
+    CSV, and Google Workspace documents.
+
+    Examples:
+        # Scan all documents
+        image-organizer drive-scan-docs --output docs-duplicates.json
+        
+        # Scan specific folder
+        image-organizer drive-scan-docs --folder-name "Work Documents"
+        
+        # Only scan PDFs
+        image-organizer drive-scan-docs --mime-type "application/pdf"
+        
+        # Only scan Office documents (Word + Excel)
+        image-organizer drive-scan-docs --mime-type "application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        
+        # Exclude Google Workspace native formats
+        image-organizer drive-scan-docs --exclude-mime-type "application/vnd.google-apps.document,application/vnd.google-apps.spreadsheet"
+        
+        # Just list documents
+        image-organizer drive-scan-docs --list-only
+    """
+    from image_organizer.platforms.google_drive import GoogleDriveClient, DOCUMENT_MIME_TYPES
+
+    try:
+        # Authenticate
+        client = GoogleDriveClient()
+        if not client.authenticate():
+            console.print("[red]✗ Authentication failed. Run 'drive-auth' first.[/red]")
+            sys.exit(1)
+        
+        console.print("[yellow]💡 Reminder: If you disabled Google Advanced Protection, re-enable it at https://myaccount.google.com/security[/yellow]\n")
+        
+        # Show folder context
+        if folder_name:
+            console.print(f"[cyan]Scanning folder:[/cyan] '{folder_name}' {'(including subfolders)' if recursive else '(this folder only)'}")
+        elif folder_id:
+            console.print(f"[cyan]Scanning folder ID:[/cyan] {folder_id} {'(including subfolders)' if recursive else '(this folder only)'}")
+        else:
+            console.print("[cyan]Scanning entire Google Drive for documents...[/cyan]")
+        
+        # Parse MIME types - default to all document types if none specified
+        mime_types_list = None
+        if mime_type:
+            mime_types_list = [mt.strip() for mt in mime_type.split(',')]
+            console.print(f"[dim]Filtering to: {', '.join(mime_types_list)}[/dim]")
+        else:
+            mime_types_list = DOCUMENT_MIME_TYPES
+            console.print("[dim]Scanning for: Word, Excel, PowerPoint, PDF, Text, CSV, Google Docs/Sheets/Slides[/dim]")
+        
+        exclude_mime_types_list = None
+        if exclude_mime_type:
+            exclude_mime_types_list = [mt.strip() for mt in exclude_mime_type.split(',')]
+            console.print(f"[dim]Excluding: {', '.join(exclude_mime_types_list)}[/dim]")
+        
+        # List files
+        files = client.list_image_files(
+            max_results=max_files,
+            folder_id=folder_id,
+            folder_name=folder_name,
+            recursive=recursive,
+            mime_types=mime_types_list,
+            exclude_mime_types=exclude_mime_types_list,
+        )
+        
+        console.print(f"[bold green]✓ Found {len(files)} document files[/bold green]\n")
+        
+        # Show sample
+        if files:
+            table = Table(title="Sample Documents", show_header=True, header_style="bold cyan")
+            table.add_column("#", width=4)
+            table.add_column("Name", width=40)
+            table.add_column("Type", width=12)
+            table.add_column("Size", justify="right", width=10)
+            table.add_column("Modified", justify="right", width=12)
+            
+            for i, file in enumerate(files[:10], 1):
+                size_bytes = int(file.get("size", 0))
+                size_mb = size_bytes / (1024 * 1024)
+                modified = file.get("modifiedTime", "Unknown")[:10]
+                mime = file.get("mimeType", "")
+                
+                # Friendly type names
+                if "pdf" in mime:
+                    type_display = "PDF"
+                elif "word" in mime or ".document" in mime:
+                    type_display = "Word"
+                elif "excel" in mime or ".spreadsheet" in mime:
+                    type_display = "Excel"
+                elif "powerpoint" in mime or ".presentation" in mime:
+                    type_display = "PowerPoint"
+                elif "text/plain" in mime:
+                    type_display = "Text"
+                elif "text/csv" in mime:
+                    type_display = "CSV"
+                else:
+                    type_display = mime.split("/")[-1][:12]
+                
+                # Format size
+                if size_mb >= 0.01:
+                    size_display = f"{size_mb:.2f} MB"
+                elif size_bytes >= 1024:
+                    size_display = f"{size_bytes / 1024:.1f} KB"
+                else:
+                    size_display = f"{size_bytes} B"
+                
+                name_display = file.get("name", "Unknown")
+                if len(name_display) > 40:
+                    name_display = name_display[:37] + "..."
+                
+                table.add_row(
+                    str(i),
+                    name_display,
+                    type_display,
+                    size_display,
+                    modified,
+                )
+            
+            console.print(table)
+            
+            if len(files) > 10:
+                console.print(f"[dim]... and {len(files) - 10} more files[/dim]\n")
+        
+        # Detect duplicates
+        if detect_duplicates and files:
+            console.print("[cyan]Detecting duplicates (MD5 checksums)...[/cyan]")
+            duplicates = client.find_exact_duplicates_by_md5(files)
+            
+            if duplicates:
+                # Calculate space savings
+                total_duplicate_size = 0
+                duplicate_count = 0
+                for md5, dup_files in duplicates.items():
+                    file_size = int(dup_files[0].get("size", 0))
+                    num_duplicates = len(dup_files) - 1
+                    duplicate_count += num_duplicates
+                    total_duplicate_size += file_size * num_duplicates
+                
+                savings_mb = total_duplicate_size / (1024 * 1024)
+                savings_gb = savings_mb / 1024
+                
+                console.print(
+                    f"[bold green]✓ Found {len(duplicates)} duplicate groups "
+                    f"({duplicate_count} duplicate files)[/bold green]"
+                )
+                console.print(f"[bold yellow]💾 Potential space savings: {savings_gb:.2f} GB ({savings_mb:.0f} MB)[/bold yellow]\n")
+                
+                # Show sample duplicates
+                table = Table(title="Duplicate Groups (Sample)", show_header=True, header_style="bold red")
+                table.add_column("Group", width=6)
+                table.add_column("File Name", width=40)
+                table.add_column("Size", justify="right", width=10)
+                table.add_column("ID", width=25)
+                
+                for group_num, (md5, dup_files) in enumerate(list(duplicates.items())[:5], 1):
+                    for file_num, file in enumerate(dup_files, 1):
+                        size_bytes = int(file.get("size", 0))
+                        size_mb = size_bytes / (1024 * 1024)
+                        
+                        if size_mb >= 0.01:
+                            size_display = f"{size_mb:.2f} MB"
+                        elif size_bytes >= 1024:
+                            size_display = f"{size_bytes / 1024:.1f} KB"
+                        else:
+                            size_display = f"{size_bytes} B"
+                        
+                        name_display = file["name"]
+                        if len(name_display) > 40:
+                            name_display = name_display[:37] + "..."
+                        
+                        table.add_row(
+                            f"{group_num}" if file_num == 1 else "",
+                            name_display,
+                            size_display,
+                            file["id"][:20] + "...",
+                        )
+                
+                console.print(table)
+                
+                if len(duplicates) > 5:
+                    console.print(f"[dim]... and {len(duplicates) - 5} more duplicate groups[/dim]\n")
+                
+                # Save to file
+                if output:
+                    with output.open("w") as f:
+                        json.dump(duplicates, f, indent=2)
+                    console.print(f"[bold green]✓ Results saved to {output}[/bold green]")
+                    console.print("[dim]You can edit this file to select which duplicates to remove[/dim]")
+            else:
+                console.print("[green]✓ No duplicates found![/green]")
+                if output:
+                    with output.open("w") as f:
+                        json.dump({}, f, indent=2)
+                    console.print(f"[dim]Empty results saved to {output}[/dim]")
+        
+    except Exception as e:
+        console.print(f"[red]✗ Error scanning Google Drive:[/red] {e}")
+        logger.exception("Drive document scan error")
+        sys.exit(1)
+
+
 @cli.command(name="drive-scan")
 @click.option(
     "--output",
@@ -805,6 +1065,193 @@ def drive_scan(
         console.print(f"[red]✗ Error scanning Drive:[/red] {e}")
         import traceback
         console.print(f"[dim]{traceback.format_exc()}[/dim]")
+        sys.exit(1)
+
+
+@cli.command(name="drive-move-duplicates")
+@click.option(
+    "--input",
+    "-i",
+    "input_file",
+    required=True,
+    type=click.Path(exists=True, path_type=Path),
+    help="JSON file from drive-scan or drive-scan-docs",
+)
+@click.option(
+    "--folder-name",
+    type=str,
+    help="Name for the review folder (auto-generated with timestamp if not specified)",
+)
+@click.option(
+    "--keep-strategy",
+    type=click.Choice(["first", "last", "newest", "oldest", "largest", "smallest"]),
+    default="first",
+    help="Which file to keep in original location",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show what would be moved without actually moving files",
+)
+@click.option(
+    "--confirm",
+    is_flag=True,
+    help="Skip confirmation prompt (use with caution!)",
+)
+@click.pass_context
+def drive_move_duplicates(
+    ctx: click.Context,
+    input_file: Path,
+    folder_name: Optional[str],
+    keep_strategy: str,
+    dry_run: bool,
+    confirm: bool,
+) -> None:
+    """
+    Move duplicate files to a review folder in Google Drive.
+    
+    This command moves duplicates detected by drive-scan or drive-scan-docs
+    to a new folder for review. One file from each duplicate group is kept
+    in its original location based on the keep strategy.
+    
+    The folder name is auto-generated with a timestamp (e.g., "Duplicates_2026-01-15_1430")
+    unless you specify a custom name.
+    
+    Examples:
+        # Move duplicates, keep first file in each group
+        image-organizer drive-move-duplicates --input docs-scan-001.json
+        
+        # Move duplicates to custom folder, keep newest
+        image-organizer drive-move-duplicates \\
+            --input full-scan-001.json \\
+            --folder-name "Images to Review" \\
+            --keep-strategy newest
+        
+        # Dry run to preview what would happen
+        image-organizer drive-move-duplicates \\
+            --input docs-scan-001.json \\
+            --keep-strategy largest \\
+            --dry-run
+        
+        # Skip confirmation prompt
+        image-organizer drive-move-duplicates \\
+            --input scan.json \\
+            --confirm
+    """
+    from image_organizer.platforms.google_drive import GoogleDriveClient
+
+    try:
+        # Load duplicates JSON
+        with input_file.open("r") as f:
+            duplicates = json.load(f)
+        
+        if not duplicates:
+            console.print("[yellow]No duplicates found in input file.[/yellow]")
+            return
+        
+        # Count total files
+        total_files = sum(len(files) for files in duplicates.values())
+        duplicate_count = sum(len(files) - 1 for files in duplicates.values())
+        
+        console.print(f"[cyan]Loaded {len(duplicates)} duplicate groups ({duplicate_count} files to move)[/cyan]\n")
+        
+        # Show strategy info
+        strategy_desc = {
+            "first": "first file in each group",
+            "last": "last file in each group",
+            "newest": "newest file (by modified date)",
+            "oldest": "oldest file (by modified date)",
+            "largest": "largest file (by size)",
+            "smallest": "smallest file (by size)",
+        }
+        console.print(f"[bold]Keep strategy:[/bold] {strategy_desc[keep_strategy]}")
+        console.print(f"[bold]Folder name:[/bold] {folder_name or 'Auto-generated with timestamp'}\n")
+        
+        # Show sample of what will be moved
+        console.print("[bold cyan]Sample duplicate groups:[/bold cyan]")
+        table = Table(show_header=True, header_style="bold yellow")
+        table.add_column("Group", width=6)
+        table.add_column("Action", width=8)
+        table.add_column("File Name", width=50)
+        table.add_column("Size", justify="right", width=10)
+        
+        for group_num, (md5, file_list) in enumerate(list(duplicates.items())[:3], 1):
+            # Determine keep index (simplified for display)
+            if keep_strategy == "last":
+                keep_idx = len(file_list) - 1
+            else:  # "first" for preview
+                keep_idx = 0
+            
+            for i, file in enumerate(file_list):
+                action = "[green]KEEP[/green]" if i == keep_idx else "[yellow]MOVE[/yellow]"
+                size_bytes = int(file.get("size", 0))
+                size_mb = size_bytes / (1024 * 1024)
+                size_display = f"{size_mb:.2f} MB" if size_mb >= 0.01 else f"{size_bytes / 1024:.1f} KB"
+                
+                name_display = file.get("name", "Unknown")
+                if len(name_display) > 50:
+                    name_display = name_display[:47] + "..."
+                
+                table.add_row(
+                    f"{group_num}" if i == 0 else "",
+                    action,
+                    name_display,
+                    size_display,
+                )
+        
+        console.print(table)
+        
+        if len(duplicates) > 3:
+            console.print(f"[dim]... and {len(duplicates) - 3} more groups[/dim]\n")
+        
+        # Confirmation
+        if not dry_run and not confirm:
+            console.print("[bold yellow]⚠️  This will move files in Google Drive![/bold yellow]")
+            console.print("[yellow]The files will remain accessible in the review folder.[/yellow]")
+            response = click.prompt(
+                "\nProceed with moving duplicates?",
+                type=click.Choice(["yes", "no"], case_sensitive=False),
+                default="no"
+            )
+            if response.lower() != "yes":
+                console.print("[yellow]Cancelled by user.[/yellow]")
+                return
+        
+        if dry_run:
+            console.print("\n[bold cyan]🔍 DRY RUN - No files will be moved[/bold cyan]")
+            console.print(f"[dim]Would move {duplicate_count} files to review folder[/dim]")
+            console.print(f"[dim]Would keep {len(duplicates)} files in original locations[/dim]")
+            return
+        
+        # Authenticate
+        client = GoogleDriveClient()
+        if not client.authenticate():
+            console.print("[red]✗ Authentication failed. Run 'drive-auth' first.[/red]")
+            console.print("[yellow]💡 Note: You may need to re-authenticate to grant write permissions[/yellow]")
+            sys.exit(1)
+        
+        # Move duplicates
+        console.print("\n[cyan]Moving duplicates...[/cyan]")
+        with console.status("[bold green]Processing..."):
+            moved, kept, folder_id = client.move_duplicates_to_folder(
+                duplicates,
+                folder_name=folder_name,
+                keep_strategy=keep_strategy,
+            )
+        
+        # Show results
+        console.print(f"\n[bold green]✓ Successfully moved {moved} files![/bold green]")
+        console.print(f"[green]✓ Kept {kept} files in original locations[/green]")
+        console.print(f"\n[cyan]Review folder ID:[/cyan] {folder_id}")
+        console.print(f"[cyan]View in Drive:[/cyan] https://drive.google.com/drive/folders/{folder_id}")
+        console.print(f"\n[yellow]💡 Tip:[/yellow] You can move files back manually if needed")
+        
+    except json.JSONDecodeError as e:
+        console.print(f"[red]✗ Invalid JSON file:[/red] {e}")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]✗ Error moving duplicates:[/red] {e}")
+        logger.exception("Drive move error")
         sys.exit(1)
 
 

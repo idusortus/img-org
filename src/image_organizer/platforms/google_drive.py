@@ -29,10 +29,12 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # Google Drive API scopes
-# Start with readonly for safety, can request more permissions later
+# Updated to include write permissions for moving files and creating folders
 SCOPES = [
     "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/drive.metadata.readonly",
+    "https://www.googleapis.com/auth/drive.file",  # Create and modify files created by this app
+    "https://www.googleapis.com/auth/drive",  # Full Drive access (needed for moving existing files)
 ]
 
 # Image MIME types supported by Google Drive
@@ -45,6 +47,58 @@ IMAGE_MIME_TYPES = [
     "image/heic",
     "image/heif",
     "image/tiff",
+]
+
+# Document MIME types for duplicate detection
+DOCUMENT_MIME_TYPES = [
+    # Microsoft Office formats
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
+    "application/msword",  # .doc
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
+    "application/vnd.ms-excel",  # .xls
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",  # .pptx
+    "application/vnd.ms-powerpoint",  # .ppt
+    # PDF
+    "application/pdf",
+    # Text formats
+    "text/plain",  # .txt
+    "text/csv",  # .csv
+    "text/tab-separated-values",  # .tsv
+    # Google Workspace formats
+    "application/vnd.google-apps.document",  # Google Docs
+    "application/vnd.google-apps.spreadsheet",  # Google Sheets
+    "application/vnd.google-apps.presentation",  # Google Slides
+    # Other common formats
+    "application/rtf",  # .rtf
+    "application/vnd.oasis.opendocument.text",  # .odt
+    "application/vnd.oasis.opendocument.spreadsheet",  # .ods
+    "application/vnd.oasis.opendocument.presentation",  # .odp
+]
+
+# Document MIME types for duplicate detection
+DOCUMENT_MIME_TYPES = [
+    # Microsoft Office formats
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
+    "application/msword",  # .doc
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
+    "application/vnd.ms-excel",  # .xls
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",  # .pptx
+    "application/vnd.ms-powerpoint",  # .ppt
+    # PDF
+    "application/pdf",
+    # Text formats
+    "text/plain",  # .txt
+    "text/csv",  # .csv
+    "text/tab-separated-values",  # .tsv
+    # Google Workspace formats
+    "application/vnd.google-apps.document",  # Google Docs
+    "application/vnd.google-apps.spreadsheet",  # Google Sheets
+    "application/vnd.google-apps.presentation",  # Google Slides
+    # Other common formats
+    "application/rtf",  # .rtf
+    "application/vnd.oasis.opendocument.text",  # .odt
+    "application/vnd.oasis.opendocument.spreadsheet",  # .ods
+    "application/vnd.oasis.opendocument.presentation",  # .odp
 ]
 
 
@@ -136,6 +190,171 @@ class GoogleDriveClient:
             logger.error(f"Failed to build Drive service: {e}")
             return False
     
+    def create_folder(self, folder_name: str, parent_id: Optional[str] = None) -> Optional[str]:
+        """
+        Create a folder in Google Drive.
+        
+        Args:
+            folder_name: Name for the new folder
+            parent_id: Parent folder ID (None = root)
+        
+        Returns:
+            Folder ID if created successfully, None otherwise
+        """
+        if not self.service:
+            raise RuntimeError("Not authenticated. Call authenticate() first.")
+        
+        try:
+            file_metadata = {
+                "name": folder_name,
+                "mimeType": "application/vnd.google-apps.folder",
+            }
+            
+            if parent_id:
+                file_metadata["parents"] = [parent_id]
+            
+            folder = self.service.files().create(
+                body=file_metadata,
+                fields="id, name"
+            ).execute()
+            
+            folder_id = folder.get("id")
+            logger.info(f"Created folder '{folder_name}' with ID: {folder_id}")
+            return folder_id
+        
+        except HttpError as e:
+            if e.resp.status == 409:  # Folder already exists
+                logger.warning(f"Folder '{folder_name}' already exists")
+                # Try to find existing folder
+                return self._find_folder_by_name(folder_name)
+            else:
+                logger.error(f"Failed to create folder: {e}")
+                return None
+        except Exception as e:
+            logger.error(f"Failed to create folder: {e}")
+            return None
+    
+    def move_file(self, file_id: str, target_folder_id: str) -> bool:
+        """
+        Move a file to a different folder.
+        
+        Args:
+            file_id: ID of the file to move
+            target_folder_id: ID of the destination folder
+        
+        Returns:
+            True if moved successfully, False otherwise
+        """
+        if not self.service:
+            raise RuntimeError("Not authenticated. Call authenticate() first.")
+        
+        try:
+            # Get current parents
+            file = self.service.files().get(
+                fileId=file_id,
+                fields="parents"
+            ).execute()
+            
+            previous_parents = ",".join(file.get("parents", []))
+            
+            # Move the file
+            self.service.files().update(
+                fileId=file_id,
+                addParents=target_folder_id,
+                removeParents=previous_parents,
+                fields="id, parents"
+            ).execute()
+            
+            logger.info(f"Moved file {file_id} to folder {target_folder_id}")
+            return True
+        
+        except HttpError as e:
+            logger.error(f"Failed to move file {file_id}: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to move file {file_id}: {e}")
+            return False
+    
+    def move_duplicates_to_folder(
+        self,
+        duplicates: Dict[str, List[Dict[str, Any]]],
+        folder_name: Optional[str] = None,
+        keep_strategy: str = "first",
+    ) -> Tuple[int, int, str]:
+        """
+        Move duplicate files to a review folder.
+        
+        Args:
+            duplicates: Dict of MD5 -> list of file dicts (from find_exact_duplicates_by_md5)
+            folder_name: Name for review folder (auto-generated if None)
+            keep_strategy: Which file to keep in original location
+                - "first": Keep first file in list (default)
+                - "last": Keep last file in list
+                - "newest": Keep newest file (by modifiedTime)
+                - "oldest": Keep oldest file (by modifiedTime)
+                - "largest": Keep largest file
+                - "smallest": Keep smallest file
+        
+        Returns:
+            Tuple of (files_moved, files_kept, folder_id)
+        """
+        if not self.service:
+            raise RuntimeError("Not authenticated. Call authenticate() first.")
+        
+        # Generate folder name with timestamp if not provided
+        if not folder_name:
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
+            folder_name = f"Duplicates_{timestamp}"
+            
+            # Check if folder exists, add seconds if collision
+            existing = self._find_folder_by_name(folder_name)
+            if existing:
+                timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+                folder_name = f"Duplicates_{timestamp}"
+        
+        # Create folder
+        folder_id = self.create_folder(folder_name)
+        if not folder_id:
+            logger.error("Failed to create review folder")
+            return (0, 0, "")
+        
+        logger.info(f"Created review folder: {folder_name} ({folder_id})")
+        
+        files_moved = 0
+        files_kept = 0
+        
+        # Process each duplicate group
+        for md5, file_list in duplicates.items():
+            if len(file_list) < 2:
+                continue
+            
+            # Determine which file to keep
+            if keep_strategy == "last":
+                keep_idx = len(file_list) - 1
+            elif keep_strategy == "newest":
+                keep_idx = max(range(len(file_list)), key=lambda i: file_list[i].get("modifiedTime", ""))
+            elif keep_strategy == "oldest":
+                keep_idx = min(range(len(file_list)), key=lambda i: file_list[i].get("modifiedTime", ""))
+            elif keep_strategy == "largest":
+                keep_idx = max(range(len(file_list)), key=lambda i: int(file_list[i].get("size", 0)))
+            elif keep_strategy == "smallest":
+                keep_idx = min(range(len(file_list)), key=lambda i: int(file_list[i].get("size", 0)))
+            else:  # "first" or default
+                keep_idx = 0
+            
+            # Move all except the one we're keeping
+            for i, file in enumerate(file_list):
+                if i == keep_idx:
+                    logger.info(f"Keeping: {file.get('name')} (ID: {file.get('id')})")
+                    files_kept += 1
+                else:
+                    logger.info(f"Moving: {file.get('name')} (ID: {file.get('id')})")
+                    if self.move_file(file.get("id"), folder_id):
+                        files_moved += 1
+        
+        logger.info(f"Moved {files_moved} files, kept {files_kept} files")
+        return (files_moved, files_kept, folder_id)
+    
     def list_image_files(
         self,
         max_results: Optional[int] = None,
@@ -171,16 +390,13 @@ class GoogleDriveClient:
                 logger.warning(f"Folder '{folder_name}' not found, scanning entire Drive")
         
         # Determine which MIME types to scan
-        target_mime_types = IMAGE_MIME_TYPES
-        
         if mime_types:
-            # Only include specified types
-            target_mime_types = [mt for mt in mime_types if mt in IMAGE_MIME_TYPES]
-            if not target_mime_types:
-                logger.warning(f"No valid MIME types specified, using all image types")
-                target_mime_types = IMAGE_MIME_TYPES
-            else:
-                logger.info(f"Filtering to MIME types: {', '.join(target_mime_types)}")
+            # Use exactly the types provided by caller
+            target_mime_types = mime_types
+            logger.info(f"Scanning MIME types: {', '.join(target_mime_types)}")
+        else:
+            # Default to images if none specified
+            target_mime_types = IMAGE_MIME_TYPES
         
         if exclude_mime_types:
             # Remove excluded types

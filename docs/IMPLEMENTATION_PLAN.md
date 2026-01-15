@@ -350,14 +350,22 @@ This document outlines the complete implementation plan for the Image Organizer 
 
 **File**: `src/platforms/google_drive.py` (move_to_trash, restore_from_trash)
 
-#### 3.5 Enhanced CLI ✅ COMPLETE (Jan 13, 2026)
+#### 3.5 Enhanced CLI ✅ COMPLETE (Jan 15, 2026)
 - [x] `drive-auth` command (OAuth flow with browser)
 - [x] `drive-scan` command with options:
   - [x] `--near-duplicates` flag (enable perceptual hashing)
   - [x] `--threshold` parameter (Hamming distance 0-64)
   - [x] `--thumbnail-dir` (custom thumbnail storage)
   - [x] Combined output for exact + near duplicates
-- [ ] `scan --pla✅ COMPLETE (Jan 13, 2026)
+  - [x] `--folder-id` and `--folder-name` (scan specific folders) ✅ NEW (Jan 15, 2026)
+  - [x] `--recursive/--no-recursive` (include/exclude subfolders) ✅ NEW (Jan 15, 2026)
+  - [x] `--mime-type` (filter to specific image types) ✅ NEW (Jan 15, 2026)
+  - [x] `--exclude-mime-type` (exclude specific types) ✅ NEW (Jan 15, 2026)
+- [x] Advanced Protection reminder in CLI output ✅ NEW (Jan 15, 2026)
+
+**File**: `src/image_organizer/cli.py` (drive-auth, drive-scan commands)
+
+#### 3.6 Testing ✅ COMPLETE (Jan 13, 2026)
 - [x] Unit tests for GoogleDriveClient (11 tests passing)
 - [x] Unit tests for perceptual hashing (10 tests passing)
 - [x] Test authentication flows
@@ -370,18 +378,133 @@ This document outlines the complete implementation plan for the Image Organizer 
 - [ ] Test pagination with large libraries (1000+ files) - TODO: Phase 3.7
 - [ ] Test cross-platform duplicate detection - TODO: Phase 3.7
 
-**Test Coverage**: 32 total tests (11 Drive + 10 perceptual + 8 review + 3 scanner), 38
-- [ ] Test pagination with large libraries (1000+ files) - TODO
-- [ ] Test cross-platform duplicate detection - TODO
+**Test Coverage**: 32 total tests (11 Drive + 10 perceptual + 8 review + 3 scanner), 38% overall
 
-**Test Coverage**: 22 total tests (11 Drive, 8 review, 3 scanner), 36% overall
+### Phase 3 Current Status (Jan 15, 2026)
 
-### Phase 3 Deliverables
-- ✅ Google Drive OAuth authentication
-- ✅ Drive duplicate detection using API checksums + imagededup
-- ✅ Cross-platform duplicate detection (local + Drive)
-- ✅ Safe trash operations
-- ✅ Extended test suite
+**✅ COMPLETE**:
+- Google Drive OAuth authentication with Advanced Protection support
+- Drive duplicate detection (MD5 + perceptual hashing)
+- Folder-specific scanning (by name or ID, recursive/non-recursive)
+- MIME type filtering (include/exclude specific formats)
+- Safe trash operations
+- Comprehensive CLI with 9 commands
+- QUICKSTART.md with setup instructions
+- 32 tests passing, 38% coverage
+
+**📋 READY FOR PRODUCTION USE**:
+- Users can scan entire Drive or specific folders
+- Filter by image type (JPEG, HEIC, PNG, etc.)
+- Generate duplicate reports (JSON)
+- Read-only operations (no deletion yet)
+
+### Phase 3.7: Cross-Platform Integration (DEFERRED)
+
+**Goal**: Detect duplicates across local Windows files AND Google Drive simultaneously
+
+**Tasks**:
+- [ ] Unified scanning: `image-organizer scan --platform all`
+- [ ] Cross-platform duplicate detection
+- [ ] Smart recommendations (keep local or cloud)
+- [ ] Platform-aware deletion
+
+**Timeline**: 1-2 weeks  
+**Status**: Deferred - Drive scanning alone provides high value
+
+---
+
+## Phase 3.8: Drive Operations & Deletion (NEXT PRIORITY)
+
+**Timeline**: 1-2 weeks  
+**Goal**: Execute operations on detected duplicates safely
+
+**Why Now**: Users can scan and get reports, but can't act on them programmatically yet
+
+### Tasks
+
+#### 3.8.1 OAuth Scope Update 🔄 IN PROGRESS
+- [ ] Update scopes from read-only to read-write:
+  - Current: `drive.readonly`, `drive.metadata.readonly`
+  - New: Add `drive.file` (app files), `drive` (full access)
+- [ ] Force re-authentication for existing users
+- [ ] Update documentation with permission explanations
+- [ ] Handle scope upgrade gracefully
+
+**Priority**: HIGH - Required for all write operations  
+**File**: `src/platforms/google_drive.py`
+
+#### 3.8.2 Move Duplicates to Folder (Priority 1) 📋 PLANNED
+- [ ] Create/find target folder in Drive
+- [ ] Move duplicate files to folder (keep one original)
+- [ ] Generate move operation report
+- [ ] CLI command: `drive-move-duplicates --input scan.json --folder "Review"`
+- [ ] Support undo (move files back)
+
+**Benefits**:
+- ✅ Safest option (no deletion)
+- ✅ Fully reversible
+- ✅ Review in Drive's native UI
+- ✅ Manual final deletion when confident
+
+**File**: `src/platforms/google_drive.py` (new methods)
+
+#### 3.8.3 Trash Operations (Priority 2) 📋 PLANNED
+- [ ] Move files to Drive trash (30-day recovery)
+- [ ] Restore from trash
+- [ ] CLI command: `drive-trash --input scan.json`
+- [ ] Show trash recovery instructions
+- [ ] Support selective trashing (edit JSON first)
+
+**Benefits**:
+- ✅ Removes from main Drive view
+- ✅ 30-day safety net
+- ✅ No permanent deletion
+- ✅ Fast cleanup
+
+**File**: Extend existing `move_to_trash()` method
+
+#### 3.8.4 Interactive Review UI (Priority 3) 📋 PLANNED
+- [ ] Side-by-side thumbnail display
+- [ ] Metadata comparison (size, date, quality)
+- [ ] User selection (keep which file?)
+- [ ] Stage decisions
+- [ ] CLI command: `drive-review --input scan.json`
+- [ ] Confirm before execution
+- [ ] Operation log for undo
+
+**Benefits**:
+- ✅ Visual confirmation
+- ✅ User control over each decision
+- ✅ Prevents mistakes
+- ✅ Professional UX
+
+**File**: New `src/image_organizer/ui/drive_review.py`
+
+#### 3.8.5 Execute from JSON 📋 PLANNED
+- [ ] Parse JSON with user edits
+- [ ] Validate file IDs still exist
+- [ ] Support batch operations
+- [ ] CLI command: `drive-execute --input edited-scan.json --confirm`
+- [ ] Dry-run mode
+- [ ] Progress tracking
+
+**Benefits**:
+- ✅ Programmatic control
+- ✅ Edit decisions offline
+- ✅ Batch processing
+- ✅ Scriptable
+
+**File**: New CLI command in `cli.py`
+
+### Phase 3.8 Deliverables
+- [ ] Move duplicates to folder command
+- [ ] Trash operations command
+- [ ] Interactive review UI
+- [ ] Execute from JSON command
+- [ ] Updated OAuth scopes
+- [ ] Comprehensive safety documentation
+
+**Status**: PLANNED - Implement after user completes initial full Drive scan
 
 ---
 
