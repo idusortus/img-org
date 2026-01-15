@@ -153,6 +153,8 @@ image-organizer drive-auth --credentials ~/Downloads/credentials.json
 # Token saved to ~/.image-organizer/token.json
 ```
 
+**⚠️ Advanced Protection Users**: If you see "Error 400: policy_enforced", your Google account has Advanced Protection enabled, which blocks unverified third-party apps. You'll need to temporarily disable it at [myaccount.google.com/security](https://myaccount.google.com/security) → Advanced Protection Program → Turn off. **Remember to re-enable it after using the tool.** See [Troubleshooting](#google-drive-authentication-fails) section for details.
+
 ### Test Drive Access
 
 ```bash
@@ -249,13 +251,28 @@ pip install -e .
 
 ### Google Drive Authentication Fails
 
-**Cause**: Invalid credentials file or missing Drive API
+**Cause 1**: Invalid credentials file or missing Drive API
 
 **Solution**:
 1. Verify credentials.json is valid OAuth 2.0 Desktop app type
 2. Enable Google Drive API in Cloud Console
 3. Check scopes match (drive.readonly, drive.metadata.readonly)
 4. Delete `~/.image-organizer/token.json` and re-authenticate
+
+**Cause 2**: "Access blocked: ApiTemplate is not approved by Advanced Protection" (Error 400: policy_enforced)
+
+**Solution**:
+- **Google Advanced Protection Program** blocks unverified third-party apps
+- **Most users don't have this** - standard Gmail accounts work fine
+- **Workaround Options**:
+  1. Use a Google account WITHOUT Advanced Protection (recommended)
+  2. Temporarily disable Advanced Protection:
+     - Visit [myaccount.google.com/security](https://myaccount.google.com/security)
+     - Scroll to "Advanced Protection Program"
+     - Click "Turn off" and follow prompts
+     - **⚠️ Remember to re-enable it after using the tool**
+  3. Download photos via [Google Takeout](https://takeout.google.com/) and scan locally
+- **Note**: Getting app verified by Google is not feasible for personal projects (requires security audit, $15k-$75k cost)
 
 ### "No duplicates found" (but you know there are some)
 

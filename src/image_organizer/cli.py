@@ -472,6 +472,8 @@ def drive_auth(ctx: click.Context, credentials: Optional[Path]) -> None:
         if success:
             console.print("[bold green]✓ Authentication successful![/bold green]")
             console.print(f"[dim]Token saved to: {client.token_file}[/dim]")
+            console.print("\n[yellow]⚠️  Reminder: If you disabled Google Advanced Protection to authenticate,[/yellow]")
+            console.print("[yellow]   remember to re-enable it at https://myaccount.google.com/security[/yellow]")
         else:
             console.print("[red]✗ Authentication failed.[/red]")
             sys.exit(1)
@@ -552,6 +554,8 @@ def drive_scan(
         if not client.authenticate():
             console.print("[red]✗ Authentication failed. Run 'drive-auth' first.[/red]")
             sys.exit(1)
+        
+        console.print("[yellow]💡 Reminder: If you disabled Google Advanced Protection, re-enable it at https://myaccount.google.com/security[/yellow]\n")
         
         # List files
         console.print("[cyan]Scanning Google Drive for images...[/cyan]")

@@ -2,7 +2,22 @@
 
 **Date**: January 15, 2026  
 **Task**: Create and verify QUICKSTART.md instructions  
-**Status**: ✅ COMPLETE
+**Status**: ✅ COMPLETE (Updated with Advanced Protection guidance)
+
+## Recent Updates (Jan 15, 2026)
+
+### Advanced Protection Issue Encountered
+- **Issue**: Google Advanced Protection Program blocks unverified third-party apps (Error 400: policy_enforced)
+- **Resolution**: User must temporarily disable Advanced Protection to authenticate
+- **Documentation Updated**:
+  - QUICKSTART.md now includes correct URL: https://myaccount.google.com/security
+  - Added step-by-step instructions for disabling/re-enabling
+  - Added CLI reminders to re-enable Advanced Protection after use
+
+### CLI Enhancements
+- **drive-auth**: Shows reminder after successful authentication to re-enable Advanced Protection
+- **drive-scan**: Shows reminder at start of scan (emoji 💡 for visibility)
+- **Reminder text**: "If you disabled Google Advanced Protection, re-enable it at https://myaccount.google.com/security"
 
 ## What We Did
 
