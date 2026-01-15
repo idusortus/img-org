@@ -84,16 +84,23 @@ image-organizer drive-auth --credentials ~/Downloads/credentials.json
 # Step 2a: Scan for exact duplicates (fast, MD5-based, no downloads)
 image-organizer drive-scan --output drive-duplicates.json
 
-# Step 2b: Scan for both exact AND near-duplicates (slower, more comprehensive)
-image-organizer drive-scan --near-duplicates --threshold 10 --output all-duplicates.json
+# Step 2b: Scan for document duplicates (Word, PDF, Excel, etc.)
+image-organizer drive-scan-docs --output docs-duplicates.json
 
-# Near-duplicate detection finds:
-# - Edited versions (cropped, resized, filtered)
-# - Screenshots of the same image
-# - Similar burst photos
-# - Re-encoded versions
+# Step 3: Move duplicates to review folder or trash them
+image-organizer drive-move-duplicates --input drive-duplicates.json --keep-strategy newest
+image-organizer drive-trash --input drive-duplicates.json --keep-strategy largest
+```
 
-# Cross-platform detection (local + Drive) coming in Phase 3.7!
+**Cross-Platform (Local + Drive):**
+```bash
+# Find files that exist in BOTH locations
+image-organizer cross-platform-scan --local-path ~/Pictures --output cross-dups.json
+
+# This helps you:
+# - Free up local disk space (keep cloud copies)
+# - Identify already-backed-up files
+# - Optimize storage across platforms
 ```
 
 ## Technology Stack
@@ -129,14 +136,31 @@ image-organizer drive-scan --near-duplicates --threshold 10 --output all-duplica
 
 **Current Status**: Core review interface working! Can scan, review with visual comparison, and stage deletions safely.
 
-### Phase 3: Google Drive Integration 🔄 IN PROGRESS
-- [x] OAuth 2.0 authentication ✅ NEW
-- [x] Drive file listing with pagination ✅ NEW
-- [x] MD5-based exact duplicate detection ✅ NEW
-- [x] CLI commands (`drive-auth`, `drive-scan`) ✅ NEW
-- [x] 11 tests passing, 50% coverage ✅ NEW
-- [ ] Thumbnail download for perceptual hashing
-- [ ] Cross-platform duplicate detection (local + Drive)
+### Phase 3: Google Drive Integration ✅ COMPLETE (Jan 15, 2026)
+- [x] OAuth 2.0 authentication
+- [x] Drive file listing with pagination and filtering
+- [x] MD5-based exact duplicate detection
+- [x] Document duplicate scanning (Word, PDF, Excel, etc.)
+- [x] Move duplicates to folder with timestamp naming
+- [x] Trash operations with 30-day recovery
+- [x] Execute operations from JSON files
+- [x] Cross-platform scanning (local + Drive)
+- [x] Folder and MIME type filtering
+- [x] 14 CLI commands total
+- [x] 32 tests passing, 38% coverage
+
+**Available Commands:**
+- **Scanning**: `scan`, `drive-scan`, `drive-scan-docs`, `cross-platform-scan`, `review`
+- **Operations**: `drive-move-duplicates`, `drive-trash`, `drive-execute`, `confirm-delete`
+- **Safety**: `protect`, `unprotect`, `list-staging`, `undo`, `drive-auth`
+
+See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for complete roadmap.
+
+### Phase 4: Advanced Features 📋 PLANNED
+- [ ] Perceptual hashing for near-duplicate detection
+- [ ] ML-based similarity detection
+- [ ] Web UI (Flask/FastAPI + React)
+- [ ] Additional platform support (Dropbox, OneDrive, iCloud)
 
 See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for complete roadmap.
 

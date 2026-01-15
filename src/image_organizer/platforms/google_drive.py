@@ -355,6 +355,94 @@ class GoogleDriveClient:
         logger.info(f"Moved {files_moved} files, kept {files_kept} files")
         return (files_moved, files_kept, folder_id)
     
+    def trash_file(self, file_id: str) -> bool:
+        """
+        Move a file to Google Drive trash.
+        
+        Args:
+            file_id: ID of the file to trash
+        
+        Returns:
+            True if trashed successfully, False otherwise
+        """
+        if not self.service:
+            raise RuntimeError("Not authenticated. Call authenticate() first.")
+        
+        try:
+            self.service.files().update(
+                fileId=file_id,
+                body={"trashed": True}
+            ).execute()
+            
+            logger.info(f"Trashed file {file_id}")
+            return True
+        
+        except HttpError as e:
+            logger.error(f"Failed to trash file {file_id}: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to trash file {file_id}: {e}")
+            return False
+    
+    def trash_duplicates(
+        self,
+        duplicates: Dict[str, List[Dict[str, Any]]],
+        keep_strategy: str = "first",
+    ) -> Tuple[int, int]:
+        """
+        Trash duplicate files (moves to Google Drive trash, 30-day recovery).
+        
+        Args:
+            duplicates: Dict of MD5 -> list of file dicts (from find_exact_duplicates_by_md5)
+            keep_strategy: Which file to keep
+                - "first": Keep first file in list (default)
+                - "last": Keep last file in list
+                - "newest": Keep newest file (by modifiedTime)
+                - "oldest": Keep oldest file (by modifiedTime)
+                - "largest": Keep largest file
+                - "smallest": Keep smallest file
+        
+        Returns:
+            Tuple of (files_trashed, files_kept)
+        """
+        if not self.service:
+            raise RuntimeError("Not authenticated. Call authenticate() first.")
+        
+        files_trashed = 0
+        files_kept = 0
+        
+        # Process each duplicate group
+        for md5, file_list in duplicates.items():
+            if len(file_list) < 2:
+                continue
+            
+            # Determine which file to keep
+            if keep_strategy == "last":
+                keep_idx = len(file_list) - 1
+            elif keep_strategy == "newest":
+                keep_idx = max(range(len(file_list)), key=lambda i: file_list[i].get("modifiedTime", ""))
+            elif keep_strategy == "oldest":
+                keep_idx = min(range(len(file_list)), key=lambda i: file_list[i].get("modifiedTime", ""))
+            elif keep_strategy == "largest":
+                keep_idx = max(range(len(file_list)), key=lambda i: int(file_list[i].get("size", 0)))
+            elif keep_strategy == "smallest":
+                keep_idx = min(range(len(file_list)), key=lambda i: int(file_list[i].get("size", 0)))
+            else:  # "first" or default
+                keep_idx = 0
+            
+            # Trash all except the one we're keeping
+            for i, file in enumerate(file_list):
+                if i == keep_idx:
+                    logger.info(f"Keeping: {file.get('name')} (ID: {file.get('id')})")
+                    files_kept += 1
+                else:
+                    logger.info(f"Trashing: {file.get('name')} (ID: {file.get('id')})")
+                    if self.trash_file(file.get("id")):
+                        files_trashed += 1
+        
+        logger.info(f"Trashed {files_trashed} files, kept {files_kept} files")
+        return (files_trashed, files_kept)
+    
     def list_image_files(
         self,
         max_results: Optional[int] = None,
