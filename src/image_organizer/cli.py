@@ -496,6 +496,31 @@ def drive_auth(ctx: click.Context, credentials: Optional[Path]) -> None:
     help="Maximum number of files to scan (for testing)",
 )
 @click.option(
+    "--folder-id",
+    type=str,
+    help="Scan specific folder by ID (get from Drive URL)",
+)
+@click.option(
+    "--folder-name",
+    type=str,
+    help="Scan specific folder by name (finds first match)",
+)
+@click.option(
+    "--recursive/--no-recursive",
+    default=True,
+    help="Include subfolders (default: True)",
+)
+@click.option(
+    "--mime-type",
+    type=str,
+    help="Only scan specific MIME type(s), comma-separated (e.g., 'image/jpeg' or 'image/jpeg,image/png')",
+)
+@click.option(
+    "--exclude-mime-type",
+    type=str,
+    help="Exclude specific MIME type(s), comma-separated (e.g., 'image/gif,image/webp')",
+)
+@click.option(
     "--detect-duplicates/--list-only",
     default=True,
     help="Detect duplicates or just list files",
@@ -523,6 +548,11 @@ def drive_scan(
     ctx: click.Context,
     output: Optional[Path],
     max_files: Optional[int],
+    folder_id: Optional[str],
+    folder_name: Optional[str],
+    recursive: bool,
+    mime_type: Optional[str],
+    exclude_mime_type: Optional[str],
     detect_duplicates: bool,
     near_duplicates: bool,
     threshold: int,
@@ -538,6 +568,24 @@ def drive_scan(
     Examples:
         # Exact duplicates only (fast)
         image-organizer drive-scan --output duplicates.json
+        
+        # Scan specific folder by name
+        image-organizer drive-scan --folder-name "2024 Photos" --output 2024-dups.json
+        
+        # Scan specific folder and subfolders
+        image-organizer drive-scan --folder-id "abc123xyz" --recursive
+        
+        # Scan folder without subfolders
+        image-organizer drive-scan --folder-name "Vacation" --no-recursive
+        
+        # Only scan JPEG images
+        image-organizer drive-scan --mime-type "image/jpeg"
+        
+        # Only scan JPEGs and PNGs
+        image-organizer drive-scan --mime-type "image/jpeg,image/png"
+        
+        # Exclude GIFs from scan
+        image-organizer drive-scan --exclude-mime-type "image/gif"
         
         # Include near-duplicates (slower, more comprehensive)
         image-organizer drive-scan --near-duplicates --threshold 10
@@ -557,9 +605,34 @@ def drive_scan(
         
         console.print("[yellow]💡 Reminder: If you disabled Google Advanced Protection, re-enable it at https://myaccount.google.com/security[/yellow]\n")
         
+        # Show folder context if specified
+        if folder_name:
+            console.print(f"[cyan]Scanning folder:[/cyan] '{folder_name}' {'(including subfolders)' if recursive else '(this folder only)'}")
+        elif folder_id:
+            console.print(f"[cyan]Scanning folder ID:[/cyan] {folder_id} {'(including subfolders)' if recursive else '(this folder only)'}")
+        else:
+            console.print("[cyan]Scanning entire Google Drive for images...[/cyan]")
+        
+        # Parse MIME type filters
+        mime_types_list = None
+        if mime_type:
+            mime_types_list = [mt.strip() for mt in mime_type.split(',')]
+            console.print(f"[dim]Filtering to: {', '.join(mime_types_list)}[/dim]")
+        
+        exclude_mime_types_list = None
+        if exclude_mime_type:
+            exclude_mime_types_list = [mt.strip() for mt in exclude_mime_type.split(',')]
+            console.print(f"[dim]Excluding: {', '.join(exclude_mime_types_list)}[/dim]")
+        
         # List files
-        console.print("[cyan]Scanning Google Drive for images...[/cyan]")
-        files = client.list_image_files(max_results=max_files)
+        files = client.list_image_files(
+            max_results=max_files,
+            folder_id=folder_id,
+            folder_name=folder_name,
+            recursive=recursive,
+            mime_types=mime_types_list,
+            exclude_mime_types=exclude_mime_types_list,
+        )
         
         console.print(f"[bold green]✓ Found {len(files)} image files in Google Drive[/bold green]\n")
         

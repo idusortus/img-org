@@ -140,6 +140,11 @@ class GoogleDriveClient:
         self,
         max_results: Optional[int] = None,
         page_size: int = 100,
+        folder_id: Optional[str] = None,
+        folder_name: Optional[str] = None,
+        recursive: bool = True,
+        mime_types: Optional[List[str]] = None,
+        exclude_mime_types: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         List all image files in Google Drive.
@@ -147,6 +152,11 @@ class GoogleDriveClient:
         Args:
             max_results: Maximum number of files to return (None for all)
             page_size: Number of files per page (max 1000)
+            folder_id: Specific folder ID to scan (optional)
+            folder_name: Folder name to search for (optional, finds first match)
+            recursive: Include subfolders (default: True)
+            mime_types: Only include these MIME types (e.g., ['image/jpeg'])
+            exclude_mime_types: Exclude these MIME types (e.g., ['image/gif'])
 
         Returns:
             List of file metadata dictionaries
@@ -154,9 +164,51 @@ class GoogleDriveClient:
         if not self.service:
             raise RuntimeError("Not authenticated. Call authenticate() first.")
         
+        # Resolve folder_name to folder_id if provided
+        if folder_name and not folder_id:
+            folder_id = self._find_folder_by_name(folder_name)
+            if not folder_id:
+                logger.warning(f"Folder '{folder_name}' not found, scanning entire Drive")
+        
+        # Determine which MIME types to scan
+        target_mime_types = IMAGE_MIME_TYPES
+        
+        if mime_types:
+            # Only include specified types
+            target_mime_types = [mt for mt in mime_types if mt in IMAGE_MIME_TYPES]
+            if not target_mime_types:
+                logger.warning(f"No valid MIME types specified, using all image types")
+                target_mime_types = IMAGE_MIME_TYPES
+            else:
+                logger.info(f"Filtering to MIME types: {', '.join(target_mime_types)}")
+        
+        if exclude_mime_types:
+            # Remove excluded types
+            target_mime_types = [mt for mt in target_mime_types if mt not in exclude_mime_types]
+            if not target_mime_types:
+                logger.warning(f"All MIME types excluded, scanning all types instead")
+                target_mime_types = IMAGE_MIME_TYPES
+            else:
+                logger.info(f"Excluding MIME types: {', '.join(exclude_mime_types)}")
+        
         # Build query for image files
-        mime_queries = [f"mimeType='{mime}'" for mime in IMAGE_MIME_TYPES]
+        mime_queries = [f"mimeType='{mime}'" for mime in target_mime_types]
         query = f"({' or '.join(mime_queries)}) and trashed=false"
+        
+        # Add folder constraint if specified
+        if folder_id:
+            if recursive:
+                # Get all subfolders
+                subfolder_ids = self._get_all_subfolders(folder_id)
+                subfolder_ids.append(folder_id)  # Include parent folder
+                
+                # Build query for all folders
+                folder_queries = [f"'{fid}' in parents" for fid in subfolder_ids]
+                query += f" and ({' or '.join(folder_queries)})"
+                logger.info(f"Scanning folder and {len(subfolder_ids)-1} subfolders")
+            else:
+                query += f" and '{folder_id}' in parents"
+                logger.info(f"Scanning folder {folder_id} (non-recursive)")
         
         # Fields to request (partial fields for efficiency)
         fields = "nextPageToken, files(id, name, mimeType, size, md5Checksum, createdTime, modifiedTime, thumbnailLink)"
@@ -525,6 +577,85 @@ class GoogleDriveClient:
         except HttpError as e:
             logger.error(f"Failed to restore file {file_id}: {e}")
             return False
+    
+    def _find_folder_by_name(self, folder_name: str) -> Optional[str]:
+        """
+        Find folder ID by name (returns first match).
+
+        Args:
+            folder_name: Name of folder to find
+
+        Returns:
+            Folder ID or None if not found
+        """
+        if not self.service:
+            raise RuntimeError("Not authenticated. Call authenticate() first.")
+        
+        try:
+            query = f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}' and trashed=false"
+            results = self._execute_with_retry(
+                self.service.files().list,
+                q=query,
+                spaces="drive",
+                fields="files(id, name)",
+                pageSize=1,
+            )
+            
+            folders = results.get("files", [])
+            if folders:
+                logger.info(f"Found folder '{folder_name}': {folders[0]['id']}")
+                return folders[0]["id"]
+            
+            return None
+        
+        except HttpError as e:
+            logger.error(f"Error finding folder '{folder_name}': {e}")
+            return None
+    
+    def _get_all_subfolders(self, folder_id: str) -> List[str]:
+        """
+        Recursively get all subfolder IDs within a folder.
+
+        Args:
+            folder_id: Parent folder ID
+
+        Returns:
+            List of subfolder IDs (including nested subfolders)
+        """
+        if not self.service:
+            raise RuntimeError("Not authenticated. Call authenticate() first.")
+        
+        all_subfolders = []
+        folders_to_process = [folder_id]
+        
+        try:
+            while folders_to_process:
+                current_folder = folders_to_process.pop(0)
+                
+                # Find direct children that are folders
+                query = f"'{current_folder}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
+                results = self._execute_with_retry(
+                    self.service.files().list,
+                    q=query,
+                    spaces="drive",
+                    fields="files(id, name)",
+                    pageSize=1000,
+                )
+                
+                subfolders = results.get("files", [])
+                for subfolder in subfolders:
+                    subfolder_id = subfolder["id"]
+                    all_subfolders.append(subfolder_id)
+                    folders_to_process.append(subfolder_id)  # Process recursively
+                
+                logger.debug(f"Found {len(subfolders)} subfolders in {current_folder}")
+            
+            logger.info(f"Found {len(all_subfolders)} total subfolders")
+            return all_subfolders
+        
+        except HttpError as e:
+            logger.error(f"Error getting subfolders: {e}")
+            return all_subfolders
     
     def _execute_with_retry(
         self,

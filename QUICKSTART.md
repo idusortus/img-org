@@ -164,9 +164,42 @@ image-organizer drive-scan --max-files 10 --list-only
 # Find exact duplicates (fast, no downloads)
 image-organizer drive-scan --output drive-duplicates.json
 
+# Scan specific folder by name (finds first match)
+image-organizer drive-scan --folder-name "2024 Photos" --output 2024-dups.json
+
+# Scan specific folder by ID (get from Drive URL)
+# Example URL: https://drive.google.com/drive/folders/1ABC-xyz123_example
+# Folder ID: 1ABC-xyz123_example
+image-organizer drive-scan --folder-id "1ABC-xyz123_example"
+
+# Scan folder without subfolders
+image-organizer drive-scan --folder-name "Vacation" --no-recursive
+
+# Only scan JPEG files (skip HEIC, PNG, etc.)
+image-organizer drive-scan --mime-type "image/jpeg"
+
+# Only scan iPhone photos (HEIC format)
+image-organizer drive-scan --mime-type "image/heic" --output iphone-dups.json
+
+# Scan JPEGs and PNGs only
+image-organizer drive-scan --mime-type "image/jpeg,image/png"
+
+# Exclude GIFs (useful to skip memes/reaction images)
+image-organizer drive-scan --exclude-mime-type "image/gif"
+
 # Find exact + near-duplicates (slower, downloads thumbnails)
 image-organizer drive-scan --near-duplicates --threshold 10
 ```
+
+**Supported MIME types:**
+- `image/jpeg` - JPG/JPEG photos
+- `image/png` - PNG images  
+- `image/gif` - GIF images/animations
+- `image/heic` - iPhone HEIF format
+- `image/heif` - HEIF variant
+- `image/webp` - WebP format
+- `image/bmp` - Bitmap images
+- `image/tiff` - TIFF images
 
 ---
 
@@ -208,12 +241,35 @@ image-organizer protect --help
 # 1. Authenticate (one-time)
 image-organizer drive-auth --credentials ~/credentials.json
 
-# 2. Scan for duplicates
+# 2. Scan entire Drive for duplicates
 image-organizer drive-scan --near-duplicates --output drive-dups.json
 
-# 3. Review results
+# 3. Scan specific folder (e.g., organized by year)
+image-organizer drive-scan --folder-name "2024" --output 2024-dups.json
+image-organizer drive-scan --folder-name "2023" --output 2023-dups.json
+
+# 4. Scan folder without checking subfolders
+image-organizer drive-scan --folder-name "Camera Uploads" --no-recursive
+
+# 5. Only scan JPEG photos (fastest, skip other formats)
+image-organizer drive-scan --folder-name "2024" --mime-type "image/jpeg"
+
+# 6. Exclude GIFs from comparison (skip memes)
+image-organizer drive-scan --folder-name "2024" --exclude-mime-type "image/gif"
+
+# 7. Review results
 # (Integration with review UI coming in Phase 3.7)
 ```
+
+**Tip for Large Libraries**: If you have photos organized in year/month folders, scan each folder separately:
+- Faster results (processes fewer files at once)
+- Isolates duplicates to specific time periods  
+- Useful when you know duplicates won't cross folder boundaries
+
+**Tip for Mixed Formats**: If you have both iPhone photos (HEIC) and regular JPEGs:
+- Scan each format separately with `--mime-type`
+- Prevents cross-format false positives in perceptual hashing
+- JPEG-to-JPEG and HEIC-to-HEIC comparisons are more accurate
 
 ---
 
